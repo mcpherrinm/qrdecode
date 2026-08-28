@@ -93,6 +93,7 @@ async function loadImageFile(file) {
   persistImage(file);
   fitView();
   runDetect();
+  clearHistory(); // undo history belongs to the previous image
 }
 
 function applyImage(bmp, name) {
@@ -122,6 +123,7 @@ function fitView() {
 
 function runDetect() {
   if (!state.imgCanvas) return;
+  if (state.corners) pushHistory(); // re-detect over an existing grid is undoable
   const maxDim = Math.max(state.imgW, state.imgH);
   const dscale = Math.min(1, 1200 / maxDim);
   let idata;
@@ -266,6 +268,90 @@ async function restoreSession() {
     console.warn('qrdecode: session restore failed', e);
     return false;
   }
+}
+
+// ---------------------------------------------------------------- undo/redo
+// Session-only history (not persisted) of everything that affects the decode:
+// grid geometry, version, EC/mask/threshold, and module overrides. View pan/zoom
+// is deliberately excluded. A snapshot is pushed BEFORE each mutation; rapid
+// repeats of the same action (slider drags, arrow-key nudges) coalesce by tag.
+
+const undoStack = [], redoStack = [];
+const HISTORY_MAX = 100;
+let lastHistTag = null, lastHistTime = 0;
+
+function historySnapshot() {
+  return {
+    version: state.version,
+    warpPts: state.warpPts ? state.warpPts.map(row => row.map(p => ({ x: p.x, y: p.y }))) : null,
+    ecOverride: state.ecOverride,
+    maskOverride: state.maskOverride,
+    thrOffset: state.thrOffset,
+    overrides: [...state.overrides],
+  };
+}
+
+function applyHistorySnapshot(s) {
+  state.version = s.version;
+  if (s.warpPts) {
+    state.warpPts = s.warpPts.map(row => row.map(p => ({ x: p.x, y: p.y })));
+    state.corners = [
+      state.warpPts[0][0], state.warpPts[0][2],
+      state.warpPts[2][2], state.warpPts[2][0],
+    ];
+  }
+  state.ecOverride = s.ecOverride;
+  state.maskOverride = s.maskOverride;
+  state.thrOffset = s.thrOffset;
+  state.overrides = new Map(s.overrides);
+  state.selHandle = -1;
+  syncControls();
+  hideDotMenu();
+  refresh(true);
+}
+
+function pushHistory(tag) {
+  const now = Date.now();
+  if (tag && tag === lastHistTag && now - lastHistTime < 800) {
+    lastHistTime = now;
+    return; // coalesce a burst of the same action into one undo step
+  }
+  undoStack.push(historySnapshot());
+  if (undoStack.length > HISTORY_MAX) undoStack.shift();
+  redoStack.length = 0;
+  lastHistTag = tag || null;
+  lastHistTime = now;
+  updateUndoButtons();
+}
+
+function doUndo() {
+  if (!undoStack.length) return;
+  redoStack.push(historySnapshot());
+  applyHistorySnapshot(undoStack.pop());
+  lastHistTag = null;
+  setMessage(`undo (${undoStack.length} left)`);
+  updateUndoButtons();
+}
+
+function doRedo() {
+  if (!redoStack.length) return;
+  undoStack.push(historySnapshot());
+  applyHistorySnapshot(redoStack.pop());
+  lastHistTag = null;
+  setMessage(`redo (${redoStack.length} left)`);
+  updateUndoButtons();
+}
+
+function clearHistory() {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  lastHistTag = null;
+  updateUndoButtons();
+}
+
+function updateUndoButtons() {
+  $('btn-undo').disabled = undoStack.length === 0;
+  $('btn-redo').disabled = redoStack.length === 0;
 }
 
 // ---------------------------------------------------------------- pipeline
@@ -464,11 +550,12 @@ function draw() {
   outline(size - 7, 0, size, 7, 1, '#000');
   outline(0, size - 7, 7, size, 1, '#000');
 
-  // Highlight layers (under the dots).
+  // Highlight layers (under the dots). Green, so the trace reads apart from the
+  // red error/forced markers.
   if (hover) {
-    drawCells(hover.block, 'rgba(220,40,40,0.14)', null, 0);
-    drawCells(hover.cw, 'rgba(220,40,40,0.28)', 'rgba(220,40,40,0.9)', 1);
-    drawCells(hover.bits, 'rgba(220,40,40,0.4)', '#d92b2b', 2);
+    drawCells(hover.block, 'rgba(26,150,60,0.14)', null, 0);
+    drawCells(hover.cw, 'rgba(26,150,60,0.28)', 'rgba(26,150,60,0.9)', 1);
+    drawCells(hover.bits, 'rgba(26,150,60,0.4)', '#1a963c', 2);
   }
 
   // Sample dots. Modules with a known expected value (finder, separator, timing,
@@ -590,18 +677,19 @@ function draw() {
     }
   }
 
-  // Rotate grabbers: circular arrows floating outside each corner.
-  const end = 5.0; // arc end angle (rad); gap leaves room for the arrowhead
-  for (const p of rotHandlePositions()) {
+  // Rotate grabber: one circular arrow floating above the top edge center.
+  const rp = rotHandlePosition();
+  if (rp) {
+    const end = 5.0; // arc end angle (rad); gap leaves room for the arrowhead
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 6, 0.8, end);
+    ctx.arc(rp.x, rp.y, 6, 0.8, end);
     ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.lineWidth = 4;
     ctx.stroke();
     ctx.strokeStyle = HANDLE_BLUE;
     ctx.lineWidth = 2;
     ctx.stroke();
-    const ex = p.x + 6 * Math.cos(end), ey = p.y + 6 * Math.sin(end);
+    const ex = rp.x + 6 * Math.cos(end), ey = rp.y + 6 * Math.sin(end);
     const tx = -Math.sin(end), ty = Math.cos(end); // direction of travel at arc end
     const nx = Math.cos(end), ny = Math.sin(end);
     ctx.fillStyle = HANDLE_BLUE;
@@ -611,6 +699,53 @@ function draw() {
     ctx.lineTo(ex - nx * 3.2, ey - ny * 3.2);
     ctx.closePath();
     ctx.fill();
+  }
+
+  // Move handle: four-direction arrow floating below the bottom edge center.
+  const mp = moveHandlePosition();
+  if (mp) {
+    ctx.beginPath();
+    for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const vx = -uy, vy = ux; // perpendicular, for the arrowhead
+      const tip = { x: mp.x + ux * 8, y: mp.y + uy * 8 };
+      ctx.moveTo(mp.x, mp.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.moveTo(tip.x - ux * 3.5 + vx * 2.8, tip.y - uy * 3.5 + vy * 2.8);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.lineTo(tip.x - ux * 3.5 - vx * 2.8, tip.y - uy * 3.5 - vy * 2.8);
+    }
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = HANDLE_BLUE;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Scale handles: outward-pointing double arrows outside each corner.
+  for (const p of scaleHandlePositions()) {
+    const { x: ux, y: uy } = p.dir;       // outward unit vector
+    const vx = -uy, vy = ux;              // perpendicular (for arrowheads)
+    const a = { x: p.x - ux * 7, y: p.y - uy * 7 };
+    const b = { x: p.x + ux * 7, y: p.y + uy * 7 };
+    const head = (tip, dx, dy) => {
+      ctx.moveTo(tip.x - dx * 4.5 + vx * 3.2, tip.y - dy * 4.5 + vy * 3.2);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.lineTo(tip.x - dx * 4.5 - vx * 3.2, tip.y - dy * 4.5 - vy * 3.2);
+    };
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    head(b, ux, uy);
+    head(a, -ux, -uy);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = HANDLE_BLUE;
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 }
 
@@ -699,6 +834,7 @@ function wireEvents() {
   menu.addEventListener('click', e => {
     const row = e.target.closest('[data-act]');
     if (!row || menuModule == null) return;
+    pushHistory();
     if (row.dataset.act === 'auto') state.overrides.delete(menuModule);
     else state.overrides.set(menuModule, row.dataset.act === 'x' ? 2 : +row.dataset.act);
     refresh(false);
@@ -713,28 +849,36 @@ function wireEvents() {
   $('btn-detect').addEventListener('click', runDetect);
   $('btn-reset-grid').addEventListener('click', () => {
     if (!state.imgCanvas) return;
+    pushHistory();
     defaultGrid();
     state.overrides.clear();
     refresh(true);
   });
+  $('btn-undo').addEventListener('click', doUndo);
+  $('btn-redo').addEventListener('click', doRedo);
   $('btn-clear-ovr').addEventListener('click', () => {
+    if (state.overrides.size) pushHistory();
     state.overrides.clear();
     refresh(false);
   });
   $('sel-version').addEventListener('change', e => {
+    pushHistory();
     state.version = +e.target.value;
     state.overrides.clear();
     refresh(true);
   });
   $('sel-ec').addEventListener('change', e => {
+    pushHistory();
     state.ecOverride = e.target.value === 'auto' ? null : e.target.value;
     refresh(false);
   });
   $('sel-mask').addEventListener('change', e => {
+    pushHistory();
     state.maskOverride = e.target.value === 'auto' ? null : +e.target.value;
     refresh(false);
   });
   $('rng-threshold').addEventListener('input', e => {
+    pushHistory('thr');
     state.thrOffset = +e.target.value;
     $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
     refresh(true);
@@ -800,8 +944,43 @@ function rotatablePoints() {
   return pts;
 }
 
-// Screen positions of the four rotate grabbers, pushed diagonally out from corners.
-function rotHandlePositions() {
+// Screen position of the single rotate grabber, floating above the top edge center.
+function rotHandlePosition() {
+  if (!state.corners) return null;
+  if (!state.mapper) updateH();
+  const size = gridSize();
+  const mid = gridToScreen(size / 2, 0);
+  const ctr = gridToScreen(size / 2, size / 2);
+  const dx = mid.x - ctr.x, dy = mid.y - ctr.y;
+  const d = Math.hypot(dx, dy) || 1;
+  return { x: mid.x + dx / d * 26, y: mid.y + dy / d * 26 };
+}
+
+function hitRotHandle(sx, sy) {
+  const p = rotHandlePosition();
+  return !!p && Math.hypot(p.x - sx, p.y - sy) <= 10;
+}
+
+// Screen position of the move handle, floating below the bottom edge center
+// (opposite the rotate grabber).
+function moveHandlePosition() {
+  if (!state.corners) return null;
+  if (!state.mapper) updateH();
+  const size = gridSize();
+  const mid = gridToScreen(size / 2, size);
+  const ctr = gridToScreen(size / 2, size / 2);
+  const dx = mid.x - ctr.x, dy = mid.y - ctr.y;
+  const d = Math.hypot(dx, dy) || 1;
+  return { x: mid.x + dx / d * 26, y: mid.y + dy / d * 26 };
+}
+
+function hitMoveHandle(sx, sy) {
+  const p = moveHandlePosition();
+  return !!p && Math.hypot(p.x - sx, p.y - sy) <= 10;
+}
+
+// Screen positions of the four scale handles, pushed diagonally out from corners.
+function scaleHandlePositions() {
   if (!state.corners) return [];
   const cs = state.corners.map(imgToScreen);
   const cx = (cs[0].x + cs[1].x + cs[2].x + cs[3].x) / 4;
@@ -809,14 +988,14 @@ function rotHandlePositions() {
   return cs.map(p => {
     const dx = p.x - cx, dy = p.y - cy;
     const d = Math.hypot(dx, dy) || 1;
-    return { x: p.x + dx / d * 26, y: p.y + dy / d * 26 };
+    return { x: p.x + dx / d * 26, y: p.y + dy / d * 26, dir: { x: dx / d, y: dy / d } };
   });
 }
 
-function hitRotHandle(sx, sy) {
-  const rs = rotHandlePositions();
-  for (let i = 0; i < rs.length; i++) {
-    if (Math.hypot(rs[i].x - sx, rs[i].y - sy) <= 10) return i;
+function hitScaleHandle(sx, sy) {
+  const ss = scaleHandlePositions();
+  for (let i = 0; i < ss.length; i++) {
+    if (Math.hypot(ss[i].x - sx, ss[i].y - sy) <= 10) return i;
   }
   return -1;
 }
@@ -842,13 +1021,38 @@ function onPointerDown(e) {
     hideHandleTip();
     return;
   }
-  const ri = hitRotHandle(p.x, p.y);
-  if (ri >= 0 && state.corners) {
+  if (state.corners && hitRotHandle(p.x, p.y)) {
     const ip = screenToImg(p.x, p.y);
     const center = gridCenterImg();
     drag = {
       mode: 'rotate', start: p, moved: false, center,
       a0: Math.atan2(ip.y - center.y, ip.x - center.x),
+      snap: rotatablePoints().map(pt => ({ pt, x: pt.x, y: pt.y })),
+    };
+    dragActive = true;
+    hideDotMenu();
+    hideHandleTip();
+    return;
+  }
+  if (state.corners && hitMoveHandle(p.x, p.y)) {
+    drag = {
+      mode: 'move', start: p, moved: false,
+      snap: rotatablePoints().map(pt => ({ pt, x: pt.x, y: pt.y })),
+    };
+    dragActive = true;
+    hideDotMenu();
+    hideHandleTip();
+    return;
+  }
+  const si = state.corners ? hitScaleHandle(p.x, p.y) : -1;
+  if (si >= 0) {
+    const ip = screenToImg(p.x, p.y);
+    // Anchor at the far corner: it stays put while width/height scale freely.
+    const far = state.corners[(si + 2) % 4];
+    const anchor = { x: far.x, y: far.y };
+    drag = {
+      mode: 'scale', start: p, moved: false, anchor,
+      d0x: ip.x - anchor.x, d0y: ip.y - anchor.y,
       snap: rotatablePoints().map(pt => ({ pt, x: pt.x, y: pt.y })),
     };
     dragActive = true;
@@ -873,7 +1077,11 @@ function onPointerMove(e) {
   const p = canvasPos(e);
   if (drag) {
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    if (!drag.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+      drag.moved = true;
+      // Snapshot the pre-drag state once, the moment a grid edit actually starts.
+      if (['handle', 'rotate', 'scale', 'move'].includes(drag.mode)) pushHistory();
+    }
     if (drag.moved) { hideDotMenu(); hideHandleTip(); }
     if (drag.mode === 'marquee') {
       if (drag.moved) {
@@ -896,6 +1104,31 @@ function onPointerMove(e) {
       refresh(true);
       return;
     }
+    // Translate the whole grid rigidly.
+    if (drag.mode === 'move' && drag.moved) {
+      const mx = dx / state.view.scale, my = dy / state.view.scale;
+      for (const s of drag.snap) {
+        s.pt.x = s.x + mx;
+        s.pt.y = s.y + my;
+      }
+      setMessage(`moved ${mx.toFixed(0)}, ${my.toFixed(0)}px`);
+      refresh(true);
+      return;
+    }
+    // Scale the whole grid about the far corner, width and height independently.
+    if (drag.mode === 'scale' && drag.moved) {
+      const ip = screenToImg(p.x, p.y);
+      const clampK = v => Math.min(20, Math.max(0.05, v));
+      const kx = Math.abs(drag.d0x) < 1e-6 ? 1 : clampK((ip.x - drag.anchor.x) / drag.d0x);
+      const ky = Math.abs(drag.d0y) < 1e-6 ? 1 : clampK((ip.y - drag.anchor.y) / drag.d0y);
+      for (const s of drag.snap) {
+        s.pt.x = drag.anchor.x + (s.x - drag.anchor.x) * kx;
+        s.pt.y = drag.anchor.y + (s.y - drag.anchor.y) * ky;
+      }
+      setMessage(`scaled ${(kx * 100).toFixed(0)}% × ${(ky * 100).toFixed(0)}%`);
+      refresh(true);
+      return;
+    }
     if (drag.mode === 'handle' && drag.moved) {
       state.selHandle = drag.idx;
       const h = handleList()[drag.idx];
@@ -910,9 +1143,23 @@ function onPointerMove(e) {
     return;
   }
   // Hover: status, cross-highlight, dot menu / handle tip.
-  const ri = hitRotHandle(p.x, p.y);
-  if (ri >= 0 && state.corners) {
-    showHandleTip(rotHandlePositions()[ri], 'drag to rotate');
+  if (state.corners && hitRotHandle(p.x, p.y)) {
+    showHandleTip(rotHandlePosition(), 'drag to rotate');
+    scheduleMenuHide();
+    setHover(null);
+    updateStatus(null);
+    return;
+  }
+  if (state.corners && hitMoveHandle(p.x, p.y)) {
+    showHandleTip(moveHandlePosition(), 'drag to move grid');
+    scheduleMenuHide();
+    setHover(null);
+    updateStatus(null);
+    return;
+  }
+  const si = state.corners ? hitScaleHandle(p.x, p.y) : -1;
+  if (si >= 0) {
+    showHandleTip(scaleHandlePositions()[si], 'drag to scale');
     scheduleMenuHide();
     setHover(null);
     updateStatus(null);
@@ -988,6 +1235,7 @@ function applyMarquee(a, b) {
     }
   }
   if (!hit.length) { draw(); return; }
+  pushHistory();
   const allIgnored = hit.every(i => state.overrides.get(i) === 2);
   for (const i of hit) {
     if (allIgnored) state.overrides.delete(i);
@@ -1004,6 +1252,7 @@ function onContextMenu(e) {
   const p = canvasPos(e);
   const m = hitModule(p.x, p.y);
   if (m && state.overrides.has(m.i)) {
+    pushHistory();
     state.overrides.delete(m.i);
     refresh(false);
     if (menuModule === m.i) renderDotMenu();
@@ -1078,6 +1327,7 @@ function hideHandleTip() {
 
 // Cycle in menu order, top to bottom: force light -> force dark -> ignore -> auto.
 function cycleOverride(i) {
+  pushHistory();
   const cur = state.overrides.get(i);
   if (cur === undefined) state.overrides.set(i, 0);
   else if (cur === 0) state.overrides.set(i, 1);
@@ -1103,6 +1353,16 @@ function onWheel(e) {
 
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault();
+    if (e.shiftKey) doRedo(); else doUndo();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
+    e.preventDefault();
+    doRedo();
+    return;
+  }
   if (e.key === 'Escape') {
     state.selHandle = -1;
     setHover(null);
@@ -1115,11 +1375,19 @@ function onKeyDown(e) {
   const c = h.pt;
   let moved = true;
   switch (e.key) {
+    case 'ArrowLeft':
+    case 'ArrowRight':
+    case 'ArrowUp':
+    case 'ArrowDown':
+      pushHistory(`nudge${state.selHandle}`); // a burst of taps = one undo step
+      break;
+    default: moved = false;
+  }
+  switch (e.key) {
     case 'ArrowLeft': c.x -= px; break;
     case 'ArrowRight': c.x += px; break;
     case 'ArrowUp': c.y -= px; break;
     case 'ArrowDown': c.y += px; break;
-    default: moved = false;
   }
   if (moved) {
     e.preventDefault();

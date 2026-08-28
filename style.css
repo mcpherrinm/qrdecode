@@ -59,7 +59,7 @@ main {
 
 #canvas-wrap {
   position: relative;
-  flex: 1 1 55%;
+  flex: 1 1 auto; /* take everything the output panel doesn't need */
   min-height: 200px;
   background-image:
     linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px),
@@ -129,10 +129,12 @@ main {
 
 /* ------------------------------------------------ output */
 #output {
-  flex: 1 1 45%;
+  /* Size to content so the canvas gets the leftover space; cap at 45% of the
+     column and scroll beyond that. */
+  flex: 0 1 auto;
+  max-height: 45%;
   overflow-y: auto;
   padding: 10px 12px;
-  min-height: 120px;
 }
 #output h2, .group h2 {
   font-size: 11px;
@@ -236,7 +238,8 @@ main {
 .lg-corner { background: #2979ff; border: 2px solid #fff; box-shadow: 0 0 0 1px #2979ff; }
 .lg-diamond { border: 2px solid #2979ff; transform: rotate(45deg) scale(0.85); }
 .lg-rotate { border: 2px solid #2979ff; border-radius: 50%; border-top-color: transparent; transform: rotate(-45deg); }
-.lg-hl { background: rgba(220, 40, 40, 0.4); border: 2px solid #d92b2b; }
+.lg-hl { background: rgba(26, 150, 60, 0.4); border: 2px solid #1a963c; }
+.lg-scale { color: #2979ff; font-weight: 700; line-height: 11px; text-align: center; }
 .lg-sample { flex: 0 0 auto; min-width: 11px; text-align: center; color: var(--fg); }
 .lg-suspect { color: var(--red); text-decoration: underline dotted; }
 .lg-fixed { color: var(--red); text-decoration: underline; }
@@ -266,6 +269,7 @@ button {
 }
 button:hover { background: var(--fg); color: var(--bg); }
 button:active { transform: translate(1px, 1px); }
+button:disabled { opacity: 0.35; pointer-events: none; }
 
 select, input[type="range"] {
   font: inherit;

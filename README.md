@@ -34,9 +34,14 @@ picks up right where you left off. Loading a new image replaces the stored sessi
    The grid is a warpable biquadratic surface with nine handles: corner squares for
    perspective, and edge-midpoint/center diamonds that bend it over **curved
    surfaces** (a label on a bottle, say) — drag any handle and the grid point under
-   it follows exactly. Circular **rotate grabbers** float outside each corner; drag
-   one to spin the whole grid around its center. **Reset grid** returns to a flat,
-   centered starting square.
+   it follows exactly. A circular **rotate grabber** floats above the top edge (drag
+   to spin the grid around its center), and **scale handles** — outward-pointing
+   arrows outside each corner — resize the grid without warping it: width and
+   height scale independently, anchored at the opposite corner. A four-direction
+   **move handle** below the bottom edge drags the whole grid rigidly.
+   **Reset grid** returns to a flat, centered starting square. Every edit — grid
+   geometry, forced/ignored modules, version/EC/mask/threshold — is undoable:
+   ctrl/⌘Z and shift+ctrl/⌘Z (or the topbar buttons), session-only.
 3. **Read the decode** — below the image: recovered text, segment structure, and
    every codeword grouped by error-correction block. Reed-Solomon runs per block, so
    an uncorrectable block doesn't stop the rest from decoding (partial decoding).
