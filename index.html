@@ -22,6 +22,8 @@
     <div id="canvas-wrap">
       <canvas id="canvas"></canvas>
       <div id="drop-hint">DROP IMAGE<span>or paste from clipboard</span></div>
+      <div id="dot-menu" hidden></div>
+      <div id="handle-tip" hidden></div>
     </div>
     <div id="statusbar">
       <span id="statusbar-left"></span>
@@ -42,34 +44,29 @@
       <h2>grid</h2>
       <div class="row">
         <label for="sel-version">version</label>
-        <select id="sel-version"></select>
+        <select id="sel-version" autocomplete="off"></select>
       </div>
       <div class="row">
         <button id="btn-detect">detect</button>
         <button id="btn-reset-grid">reset grid</button>
       </div>
       <div class="row">
-        <label for="chk-warp">warp</label>
-        <input type="checkbox" id="chk-warp">
-        <button id="btn-flatten">flatten</button>
-      </div>
-      <div class="row">
         <label for="rng-threshold">threshold</label>
-        <input type="range" id="rng-threshold" min="-64" max="64" value="0">
+        <input type="range" id="rng-threshold" min="-64" max="64" value="0" autocomplete="off">
         <span id="thr-label">+0</span>
       </div>
       <div id="fn-info" class="mono-line dim"></div>
-      <p class="hint">drag handles to align · warp adds edge/center handles for curved
-      surfaces (flatten removes curvature) · wheel = zoom · drag = pan · arrows nudge
-      selected handle (⇧ = fine) · red-tinted dots disagree with the expected
-      finder/timing/alignment/format pattern</p>
+      <p class="hint">drag corner squares for perspective, edge/center diamonds to bend
+      the grid over curved surfaces, and the circular grabbers outside the corners to
+      rotate · reset grid re-flattens · wheel = zoom · drag = pan · arrows nudge
+      selected handle (⇧ = fine)</p>
     </div>
 
     <div class="group">
       <h2>format</h2>
       <div class="row">
         <label for="sel-ec">ec level</label>
-        <select id="sel-ec">
+        <select id="sel-ec" autocomplete="off">
           <option value="auto">auto</option>
           <option value="L">L (7%)</option>
           <option value="M">M (15%)</option>
@@ -79,7 +76,7 @@
       </div>
       <div class="row">
         <label for="sel-mask">mask</label>
-        <select id="sel-mask">
+        <select id="sel-mask" autocomplete="off">
           <option value="auto">auto</option>
           <option value="0">0</option><option value="1">1</option>
           <option value="2">2</option><option value="3">3</option>
@@ -104,6 +101,22 @@
       <h2>blocks</h2>
       <div id="block-list"><span class="dim">—</span></div>
       <p class="hint">✓ clean · +n corrected · ✕ uncorrectable<br>hover to see the block's modules</p>
+    </div>
+
+    <div class="group">
+      <h2>legend</h2>
+      <div class="lg"><span class="lg-icon lg-dot-black"></span>sampled black module (1)</div>
+      <div class="lg"><span class="lg-icon lg-dot-white"></span>sampled white module (0)</div>
+      <div class="lg"><span class="lg-icon lg-dot-badb"></span>reads ■ where known pattern is □</div>
+      <div class="lg"><span class="lg-icon lg-dot-badw"></span>reads □ where known pattern is ■</div>
+      <div class="lg"><span class="lg-icon lg-forced"></span>forced value (right-click resets)</div>
+      <div class="lg"><span class="lg-icon lg-corner"></span>corner handle — drag for perspective</div>
+      <div class="lg"><span class="lg-icon lg-diamond"></span>warp handle — drag to curve grid</div>
+      <div class="lg"><span class="lg-icon lg-rotate"></span>rotate grabber — drag to rotate grid</div>
+      <div class="lg"><span class="lg-icon lg-hl"></span>hover trace — source of output bits</div>
+      <div class="lg"><span class="lg-sample lg-suspect">A</span>suspect character (failed block)</div>
+      <div class="lg"><span class="lg-sample lg-fixed">3f</span>corrected codeword</div>
+      <div class="lg"><span class="lg-sample dim">3f</span>error-correction codeword</div>
     </div>
   </aside>
 </main>

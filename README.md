@@ -13,6 +13,10 @@ QR code that a person can help recover module by module.
 Plain static HTML/CSS/JS — no build step, no dependencies, no network. Open
 `index.html` directly, or serve the folder with any static server.
 
+The in-progress session (image, grid alignment, forced bits, settings, view)
+persists in the browser's IndexedDB, so a reload — say, after editing the code —
+picks up right where you left off. Loading a new image replaces the stored session.
+
 ## Workflow
 
 1. **Load an image** — open, drag-drop, or paste from the clipboard.
@@ -27,17 +31,23 @@ Plain static HTML/CSS/JS — no build step, no dependencies, no network. Open
    assumed EC+mask — are **tinted red when they disagree** with expectation, and the
    sidebar counts the mismatches, so you can see alignment quality at a glance.
 
-   For photos of QR codes on **curved surfaces**, enable **warp**: the grid gains
-   edge-midpoint and center handles (nine total) and becomes a biquadratic surface
-   that bends with the label — drag any handle and the grid point under it follows
-   exactly. **Flatten** removes accumulated curvature while keeping the corners.
+   The grid is a warpable biquadratic surface with nine handles: corner squares for
+   perspective, and edge-midpoint/center diamonds that bend it over **curved
+   surfaces** (a label on a bottle, say) — drag any handle and the grid point under
+   it follows exactly. Circular **rotate grabbers** float outside each corner; drag
+   one to spin the whole grid around its center. **Reset grid** returns to a flat,
+   centered starting square.
 3. **Read the decode** — below the image: recovered text, segment structure, and
    every codeword grouped by error-correction block. Reed-Solomon runs per block, so
    an uncorrectable block doesn't stop the rest from decoding (partial decoding).
    Characters that depend on a failed block are flagged red as suspect.
 4. **Fix bits by hand** — click any module to cycle auto → force-black → force-white
-   → auto (right-click resets). Forced modules are marked with red squares. The
-   decode updates live, and corrected codewords report what changed.
+   → auto (right-click resets), or use the small dropdown that appears under a
+   hovered dot to pick force ■ / force □ / auto directly (the auto row shows the
+   detected value). Clicking through a warp diamond toggles the module beneath it;
+   dragging the diamond moves the grid. Forced modules are marked with red squares.
+   The decode updates live, and corrected codewords report what changed. A legend
+   at the bottom of the sidebar explains every marker and color.
 5. **Trace provenance** — hover a decoded character, codeword, segment, or block
    chip and the exact source modules light up on the image (strong = the exact bits,
    medium = the full codeword, faint = the whole EC block). Hover a module on the

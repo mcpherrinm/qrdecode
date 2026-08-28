@@ -9,7 +9,7 @@ const state = {
   gray: null,          // Uint8Array luminance of the original image
   fileName: '',
   corners: null,       // [TL, TR, BR, BL] in image coords
-  warpPts: null,       // 3x3 control points when warp mode is on (corners shared by ref)
+  warpPts: null,       // 3x3 warp control points (corner objects shared with state.corners)
   mapper: null,        // grid <-> image mapping (flat or warped)
   version: 2,
   ecOverride: null,    // null = auto
@@ -39,10 +39,22 @@ window.addEventListener('DOMContentLoaded', () => {
   setupCanvasSize();
   wireEvents();
   buildVersionSelect();
+  syncControls();
   renderSidebar();
   renderOutput();
   draw();
+  restoreSession();
 });
+
+// Push app state into the sidebar controls. Guards against the browser restoring
+// stale form values across a reload, and re-syncs after a session restore.
+function syncControls() {
+  $('sel-version').value = state.version;
+  $('sel-ec').value = state.ecOverride == null ? 'auto' : state.ecOverride;
+  $('sel-mask').value = state.maskOverride == null ? 'auto' : String(state.maskOverride);
+  $('rng-threshold').value = state.thrOffset;
+  $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
+}
 
 function setupCanvasSize() {
   const wrap = $('canvas-wrap');
@@ -77,6 +89,13 @@ async function loadImageFile(file) {
     setMessage(`could not read image: ${e.message}`);
     return;
   }
+  applyImage(bmp, file.name || 'pasted image');
+  persistImage(file);
+  fitView();
+  runDetect();
+}
+
+function applyImage(bmp, name) {
   const off = document.createElement('canvas');
   off.width = bmp.width;
   off.height = bmp.height;
@@ -86,13 +105,11 @@ async function loadImageFile(file) {
   state.imgH = bmp.height;
   const idata = off.getContext('2d').getImageData(0, 0, bmp.width, bmp.height);
   state.gray = toGray(idata);
-  state.fileName = file.name || 'pasted image';
+  state.fileName = name;
   state.overrides.clear();
   state.result = null;
   $('file-name').textContent = `${state.fileName} · ${bmp.width}×${bmp.height}`;
   $('drop-hint').style.display = 'none';
-  fitView();
-  runDetect();
 }
 
 function fitView() {
@@ -121,7 +138,7 @@ function runDetect() {
   const det = detectQR(idata);
   if (det) {
     state.corners = det.corners.map(p => ({ x: p.x / dscale, y: p.y / dscale }));
-    if (state.warpPts) initWarpPts(); // rebuild control grid on the new corners
+    initWarpPts(); // rebuild control grid on the new corners
     state.version = det.version;
     $('sel-version').value = det.version;
     state.overrides.clear();
@@ -140,18 +157,126 @@ function defaultGrid() {
     { x: cx - r, y: cy - r }, { x: cx + r, y: cy - r },
     { x: cx + r, y: cy + r }, { x: cx - r, y: cy + r },
   ];
-  if (state.warpPts) initWarpPts();
+  initWarpPts();
+}
+
+// ---------------------------------------------------------------- persistence
+// The in-progress investigation (image + grid + forced bits + settings) survives
+// reloads. IndexedDB rather than localStorage: photos easily exceed the ~5MB
+// localStorage quota, and IDB stores the image Blob natively.
+
+const SAVE_VERSION = 1;
+
+let idbPromise = null;
+function idbOpen() {
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('no indexedDB'));
+  if (!idbPromise) {
+    idbPromise = new Promise((res, rej) => {
+      const r = indexedDB.open('qrdecode', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  return idbPromise;
+}
+
+async function idbPut(key, val) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(val, key);
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const rq = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+}
+
+function persistImage(fileBlob) {
+  idbPut('image', { blob: fileBlob, name: state.fileName })
+    .catch(e => console.warn('qrdecode: could not persist image', e));
+}
+
+let saveTimer = 0;
+function scheduleSave() {
+  if (!state.imgCanvas || !state.corners) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveState, 400);
+}
+
+function saveState() {
+  if (!state.corners) return;
+  if (!state.warpPts) initWarpPts();
+  idbPut('state', {
+    v: SAVE_VERSION,
+    fileName: state.fileName,
+    version: state.version,
+    warpPts: state.warpPts.map(row => row.map(p => ({ x: p.x, y: p.y }))),
+    ecOverride: state.ecOverride,
+    maskOverride: state.maskOverride,
+    thrOffset: state.thrOffset,
+    overrides: [...state.overrides],
+    view: { ...state.view },
+  }).catch(() => {});
+}
+
+// Re-apply a saved state snapshot (grid, forced bits, settings, view).
+function applySavedState(saved) {
+  state.version = saved.version;
+  state.warpPts = saved.warpPts.map(row => row.map(p => ({ x: p.x, y: p.y })));
+  state.corners = [
+    state.warpPts[0][0], state.warpPts[0][2],
+    state.warpPts[2][2], state.warpPts[2][0],
+  ];
+  state.ecOverride = saved.ecOverride;
+  state.maskOverride = saved.maskOverride;
+  state.thrOffset = saved.thrOffset;
+  state.overrides = new Map(saved.overrides);
+  if (saved.view) state.view = { ...saved.view };
+  state.selHandle = -1;
+  syncControls();
+}
+
+// On boot: restore image + state if present. Skips auto-detection so the
+// restored grid alignment is untouched.
+async function restoreSession() {
+  let img, saved;
+  try {
+    [img, saved] = await Promise.all([idbGet('image'), idbGet('state')]);
+  } catch (e) {
+    return false; // no storage available
+  }
+  if (!img || !img.blob || !saved || saved.v !== SAVE_VERSION) return false;
+  try {
+    const bmp = await createImageBitmap(img.blob);
+    applyImage(bmp, img.name || saved.fileName || 'restored image');
+    applySavedState(saved);
+    setMessage('restored previous session');
+    refresh(true);
+    return true;
+  } catch (e) {
+    console.warn('qrdecode: session restore failed', e);
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------- pipeline
 
 function gridSize() { return 17 + 4 * state.version; }
 
+// Warp is always on: the mapper is the 3x3 control surface, initialized flat.
 function updateH() {
   if (!state.corners) { state.mapper = null; return; }
-  state.mapper = state.warpPts
-    ? makeWarpMap(state.warpPts, gridSize())
-    : makeFlatMap(state.corners, gridSize());
+  if (!state.warpPts) initWarpPts();
+  state.mapper = makeWarpMap(state.warpPts, gridSize());
 }
 
 // ---- warp mode: 3x3 control points, corners shared by reference with state.corners.
@@ -174,25 +299,11 @@ function initWarpPts() {
   state.warpPts = pts;
 }
 
-function setWarp(on) {
-  if (on && !state.warpPts) {
-    initWarpPts();
-  } else if (!on && state.warpPts) {
-    state.warpPts = null;
-    state.selHandle = -1;
-  } else {
-    return;
-  }
-  refresh(true);
-}
-
-// Draggable handles in a stable order: flat = 4 corners; warp = all 9 control points.
+// Draggable handles in a stable order: all 9 control points.
 function handleList() {
   if (!state.corners) return [];
+  if (!state.warpPts) initWarpPts();
   const labels = ['TL', 'TR', 'BR', 'BL'];
-  if (!state.warpPts) {
-    return state.corners.map((pt, i) => ({ pt, label: labels[i], corner: true }));
-  }
   const out = [];
   for (let i = 0; i < 3; i++) {
     for (let j = 0; j < 3; j++) {
@@ -258,7 +369,10 @@ function refresh(full) {
     renderSidebar();
     lastOutputRender = now;
   }
+  if (!state.sample) hideDotMenu();
+  else if (menuModule != null) renderDotMenu();
   draw();
+  scheduleSave();
 }
 
 function setMessage(msg) {
@@ -402,35 +516,65 @@ function draw() {
     }
   }
 
-  // Control handles: squares for corners, circles for warp mid-points.
+  // Control handles: bright blue — squares for corners, diamonds for warp points.
+  const HANDLE_BLUE = '#2979ff', HANDLE_BLUE_DARK = '#0d3fb8';
   const handles = handleList();
   for (let i = 0; i < handles.length; i++) {
     const h = handles[i];
     const p = imgToScreen(h.pt);
     const sel = state.selHandle === i;
-    ctx.fillStyle = sel ? '#000' : '#fff';
-    ctx.strokeStyle = sel ? '#fff' : '#000';
-    ctx.lineWidth = 2;
+    const blue = sel ? HANDLE_BLUE_DARK : HANDLE_BLUE;
     if (h.corner) {
+      ctx.fillStyle = blue;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
       ctx.fillRect(p.x - 6, p.y - 6, 12, 12);
       ctx.strokeRect(p.x - 6, p.y - 6, 12, 12);
-      ctx.strokeStyle = '#000';
+      ctx.strokeStyle = blue;
       ctx.lineWidth = 1;
-      ctx.strokeRect(p.x - 6.5, p.y - 6.5, 13, 13);
-      ctx.fillStyle = '#000';
-      ctx.font = '10px ui-monospace, monospace';
-      ctx.fillText(h.label, p.x + 9, p.y - 9);
+      ctx.strokeRect(p.x - 7.5, p.y - 7.5, 15, 15);
+      ctx.fillStyle = HANDLE_BLUE_DARK;
+      ctx.font = 'bold 10px ui-monospace, monospace';
+      ctx.fillText(h.label, p.x + 10, p.y - 10);
     } else {
+      // Unfilled diamond so the module dot underneath stays visible.
+      const s = 9;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(p.x, p.y - s);
+      ctx.lineTo(p.x + s, p.y);
+      ctx.lineTo(p.x, p.y + s);
+      ctx.lineTo(p.x - s, p.y);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 4;
       ctx.stroke();
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
+      ctx.strokeStyle = blue;
+      ctx.lineWidth = 2;
       ctx.stroke();
     }
+  }
+
+  // Rotate grabbers: circular arrows floating outside each corner.
+  const end = 5.0; // arc end angle (rad); gap leaves room for the arrowhead
+  for (const p of rotHandlePositions()) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6, 0.8, end);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = HANDLE_BLUE;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    const ex = p.x + 6 * Math.cos(end), ey = p.y + 6 * Math.sin(end);
+    const tx = -Math.sin(end), ty = Math.cos(end); // direction of travel at arc end
+    const nx = Math.cos(end), ny = Math.sin(end);
+    ctx.fillStyle = HANDLE_BLUE;
+    ctx.beginPath();
+    ctx.moveTo(ex + tx * 6, ey + ty * 6);
+    ctx.lineTo(ex + nx * 3.2, ey + ny * 3.2);
+    ctx.lineTo(ex - nx * 3.2, ey - ny * 3.2);
+    ctx.closePath();
+    ctx.fill();
   }
 }
 
@@ -506,7 +650,24 @@ function wireEvents() {
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
-  canvas.addEventListener('pointerleave', () => { if (!drag) setHover(null); updateStatus(null); });
+  canvas.addEventListener('pointerleave', () => {
+    if (!drag) setHover(null);
+    updateStatus(null);
+    hideHandleTip();
+    scheduleMenuHide(); // grace period so the pointer can travel into the menu
+  });
+
+  const menu = $('dot-menu');
+  menu.addEventListener('pointerenter', () => { menuHovered = true; clearTimeout(menuHideTimer); });
+  menu.addEventListener('pointerleave', () => { menuHovered = false; hideDotMenu(); });
+  menu.addEventListener('click', e => {
+    const row = e.target.closest('[data-act]');
+    if (!row || menuModule == null) return;
+    if (row.dataset.act === 'auto') state.overrides.delete(menuModule);
+    else state.overrides.set(menuModule, +row.dataset.act);
+    refresh(false);
+    renderDotMenu();
+  });
   canvas.addEventListener('wheel', onWheel, { passive: false });
   canvas.addEventListener('contextmenu', onContextMenu);
   window.addEventListener('keydown', onKeyDown);
@@ -536,13 +697,6 @@ function wireEvents() {
   $('sel-mask').addEventListener('change', e => {
     state.maskOverride = e.target.value === 'auto' ? null : +e.target.value;
     refresh(false);
-  });
-  $('chk-warp').addEventListener('change', e => setWarp(e.target.checked));
-  $('btn-flatten').addEventListener('click', () => {
-    if (state.warpPts) {
-      initWarpPts();
-      refresh(true);
-    }
   });
   $('rng-threshold').addEventListener('input', e => {
     state.thrOffset = +e.target.value;
@@ -586,6 +740,51 @@ function hitHandle(sx, sy) {
   return -1;
 }
 
+// ---- rotation: grabbers floating outside each corner, rotating the whole grid
+// (corners + warp points) around the grid center.
+
+function gridCenterImg() {
+  const c = state.corners;
+  return {
+    x: (c[0].x + c[1].x + c[2].x + c[3].x) / 4,
+    y: (c[0].y + c[1].y + c[2].y + c[3].y) / 4,
+  };
+}
+
+// Every control point that rotation moves.
+function rotatablePoints() {
+  const pts = [...state.corners];
+  if (state.warpPts) {
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        if (WARP_CORNER[`${i},${j}`] === undefined) pts.push(state.warpPts[i][j]);
+      }
+    }
+  }
+  return pts;
+}
+
+// Screen positions of the four rotate grabbers, pushed diagonally out from corners.
+function rotHandlePositions() {
+  if (!state.corners) return [];
+  const cs = state.corners.map(imgToScreen);
+  const cx = (cs[0].x + cs[1].x + cs[2].x + cs[3].x) / 4;
+  const cy = (cs[0].y + cs[1].y + cs[2].y + cs[3].y) / 4;
+  return cs.map(p => {
+    const dx = p.x - cx, dy = p.y - cy;
+    const d = Math.hypot(dx, dy) || 1;
+    return { x: p.x + dx / d * 26, y: p.y + dy / d * 26 };
+  });
+}
+
+function hitRotHandle(sx, sy) {
+  const rs = rotHandlePositions();
+  for (let i = 0; i < rs.length; i++) {
+    if (Math.hypot(rs[i].x - sx, rs[i].y - sy) <= 10) return i;
+  }
+  return -1;
+}
+
 function hitModule(sx, sy) {
   if (!state.mapper) return null;
   const ip = screenToImg(sx, sy);
@@ -600,9 +799,25 @@ function onPointerDown(e) {
   if (e.button !== 0) return;
   const p = canvasPos(e);
   canvas.setPointerCapture(e.pointerId);
+  const ri = hitRotHandle(p.x, p.y);
+  if (ri >= 0 && state.corners) {
+    const ip = screenToImg(p.x, p.y);
+    const center = gridCenterImg();
+    drag = {
+      mode: 'rotate', start: p, moved: false, center,
+      a0: Math.atan2(ip.y - center.y, ip.x - center.x),
+      snap: rotatablePoints().map(pt => ({ pt, x: pt.x, y: pt.y })),
+    };
+    dragActive = true;
+    hideDotMenu();
+    hideHandleTip();
+    return;
+  }
   const hi = hitHandle(p.x, p.y);
   if (hi >= 0) {
-    state.selHandle = hi;
+    // Corners select immediately; diamonds only select once an actual drag starts,
+    // because a plain click on a diamond toggles the module underneath instead.
+    if (handleList()[hi].corner) state.selHandle = hi;
     drag = { mode: 'handle', idx: hi, start: p, moved: false };
     dragActive = true;
   } else {
@@ -616,7 +831,23 @@ function onPointerMove(e) {
   if (drag) {
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    if (drag.moved) { hideDotMenu(); hideHandleTip(); }
+    if (drag.mode === 'rotate' && drag.moved) {
+      const ip = screenToImg(p.x, p.y);
+      const a = Math.atan2(ip.y - drag.center.y, ip.x - drag.center.x);
+      const da = a - drag.a0;
+      const cos = Math.cos(da), sin = Math.sin(da);
+      for (const s of drag.snap) {
+        const dx0 = s.x - drag.center.x, dy0 = s.y - drag.center.y;
+        s.pt.x = drag.center.x + dx0 * cos - dy0 * sin;
+        s.pt.y = drag.center.y + dx0 * sin + dy0 * cos;
+      }
+      setMessage(`rotated ${(da * 180 / Math.PI).toFixed(1)}°`);
+      refresh(true);
+      return;
+    }
     if (drag.mode === 'handle' && drag.moved) {
+      state.selHandle = drag.idx;
       const h = handleList()[drag.idx];
       if (h) Object.assign(h.pt, screenToImg(p.x, p.y));
       refresh(true);
@@ -628,9 +859,29 @@ function onPointerMove(e) {
     }
     return;
   }
-  // Hover: status + cross-highlight from canvas to output.
+  // Hover: status, cross-highlight, dot menu / handle tip.
+  const ri = hitRotHandle(p.x, p.y);
+  if (ri >= 0 && state.corners) {
+    showHandleTip(rotHandlePositions()[ri], 'drag to rotate');
+    scheduleMenuHide();
+    setHover(null);
+    updateStatus(null);
+    return;
+  }
   const m = hitModule(p.x, p.y);
   updateStatus(m);
+  const hi = hitHandle(p.x, p.y);
+  const h = hi >= 0 ? handleList()[hi] : null;
+  if (h && h.corner) {
+    hideHandleTip();
+    hideDotMenu();
+    setHover(null);
+    return;
+  }
+  // A diamond handle shows its tip AND the dot menu for the module beneath it.
+  if (h) showHandleTip(imgToScreen(h.pt), 'drag to move'); else hideHandleTip();
+  if (m && state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0);
+  else scheduleMenuHide();
   if (m && state.result) {
     const g = state.result.moduleToCw[m.i];
     if (g >= 0) { setHoverFromCw(g, m.i); return; }
@@ -645,17 +896,24 @@ function onPointerUp(e) {
   drag = null;
   dragActive = false;
   if (!wasDrag) return;
-  if (wasDrag.mode === 'maybe' && !wasDrag.moved) {
+  if (!wasDrag.moved) {
+    // A plain click on a diamond handle acts on the module beneath it; a click on
+    // a corner handle keeps its selection; a click elsewhere toggles that module.
+    const h = wasDrag.mode === 'handle' ? handleList()[wasDrag.idx] : null;
+    if (h && h.corner) { draw(); return; }
     const m = hitModule(p.x, p.y);
     if (m) {
       cycleOverride(m.i);
       refresh(false);
+      if (state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0); // keep menu current
       return;
     }
     state.selHandle = -1;
     draw();
   } else if (wasActive) {
-    refresh(true); // final full render after a corner drag
+    refresh(true); // final full render after a handle drag
+  } else if (wasDrag.mode === 'pan') {
+    scheduleSave(); // view changed without a refresh
   }
 }
 
@@ -666,7 +924,73 @@ function onContextMenu(e) {
   if (m && state.overrides.has(m.i)) {
     state.overrides.delete(m.i);
     refresh(false);
+    if (menuModule === m.i) renderDotMenu();
   }
+}
+
+// ------------------------------------------------ dot menu / handle tip overlays
+
+let menuModule = null;   // module idx the dot menu is showing for
+let menuHovered = false;
+let menuHideTimer = 0;
+
+function showDotMenu(m, minGap = 0) {
+  menuModule = m.i;
+  clearTimeout(menuHideTimer);
+  renderDotMenu();
+  const size = gridSize();
+  const r = (m.i / size) | 0, c = m.i % size;
+  const p = gridToScreen(c + 0.5, r + 0.5);
+  const dotR = Math.min(7, Math.max(1.4, modulePx() * 0.22));
+  const el = $('dot-menu');
+  el.style.left = `${p.x}px`;
+  el.style.top = `${p.y + Math.max(dotR + 5, minGap)}px`;
+  el.style.transform = 'translateX(-50%)';
+  el.hidden = false;
+}
+
+function renderDotMenu() {
+  if (menuModule == null) return;
+  const el = $('dot-menu');
+  const ovr = state.overrides.get(menuModule);
+  const sampled = state.sample ? state.sample.bits[menuModule] : 0;
+  const rows = [
+    { act: '0', label: 'force □', active: ovr === 0 },
+    { act: '1', label: 'force ■', active: ovr === 1 },
+    { act: 'auto', label: `auto (${sampled ? '■' : '□'})`, active: ovr === undefined },
+  ];
+  el.textContent = '';
+  for (const row of rows) {
+    const d = document.createElement('div');
+    d.className = 'dm-row' + (row.active ? ' active' : '');
+    d.dataset.act = row.act;
+    d.textContent = `${row.active ? '●' : '○'} ${row.label}`;
+    el.appendChild(d);
+  }
+}
+
+function hideDotMenu() {
+  if (menuModule == null) return;
+  menuModule = null;
+  $('dot-menu').hidden = true;
+}
+
+function scheduleMenuHide() {
+  clearTimeout(menuHideTimer);
+  menuHideTimer = setTimeout(() => { if (!menuHovered) hideDotMenu(); }, 150);
+}
+
+function showHandleTip(p, text) {
+  const el = $('handle-tip');
+  el.textContent = text;
+  el.style.left = `${p.x}px`;
+  el.style.top = `${p.y - 14}px`;
+  el.style.transform = 'translate(-50%, -100%)';
+  el.hidden = false;
+}
+
+function hideHandleTip() {
+  $('handle-tip').hidden = true;
 }
 
 // auto -> force dark -> force light -> auto
@@ -680,6 +1004,8 @@ function cycleOverride(i) {
 function onWheel(e) {
   if (!state.imgCanvas) return;
   e.preventDefault();
+  hideDotMenu();
+  hideHandleTip();
   const p = canvasPos(e);
   const factor = Math.pow(1.0015, -e.deltaY);
   const ns = Math.min(200, Math.max(0.02, state.view.scale * factor));
@@ -688,6 +1014,7 @@ function onWheel(e) {
   state.view.oy = p.y - (p.y - state.view.oy) * k;
   state.view.scale = ns;
   draw();
+  scheduleSave();
 }
 
 function onKeyDown(e) {
