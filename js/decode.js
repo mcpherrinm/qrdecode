@@ -4,7 +4,10 @@
 
 class DecErr extends Error {}
 
-// getBit(r, c) => 0/1 (1 = dark). Returns a rich result object; never throws.
+// getBit(r, c) => 0/1 (1 = dark). opts.isIgnored(r, c) marks modules known to be
+// damaged (e.g. under a logo): any codeword touching one becomes an RS erasure,
+// which costs half the parity budget of an unknown-position error.
+// Returns a rich result object; never throws.
 function decodeMatrix(getBit, version, opts = {}) {
   const layout = getLayout(version);
   const size = layout.size;
@@ -19,12 +22,14 @@ function decodeMatrix(getBit, version, opts = {}) {
   const order = layout.order;
   const numCw = order.length >> 3;
   const cwRaw = new Uint8Array(numCw);
+  const cwErased = new Uint8Array(numCw); // codeword touches an ignored module
   for (let i = 0; i < numCw; i++) {
     let v = 0;
     for (let j = 0; j < 8; j++) {
       const idx = order[i * 8 + j];
       const r = (idx / size) | 0, c = idx % size;
       v = (v << 1) | (getBit(r, c) ^ (maskFn(r, c) ? 1 : 0));
+      if (opts.isIgnored && opts.isIgnored(r, c)) cwErased[i] = 1;
     }
     cwRaw[i] = v;
   }
@@ -41,12 +46,15 @@ function decodeMatrix(getBit, version, opts = {}) {
     const blk = struct.blocks[b];
     const globals = blk.dataGlobal.concat(blk.ecGlobal);
     const msg = globals.map(g => cwRaw[g] || 0);
-    const res = rsDecode(msg, struct.ecPer);
-    const fixed = new Set(res.errors);
+    const erasePos = [];
+    for (let j = 0; j < globals.length; j++) if (cwErased[globals[j]]) erasePos.push(j);
+    const res = rsDecode(msg, struct.ecPer, erasePos);
+    const fixed = new Set([...res.errors, ...res.erasures]);
     const info = {
       index: b,
-      status: res.ok ? (res.errors.length ? 'fixed' : 'clean') : 'fail',
-      fixedCount: res.errors.length,
+      status: res.ok ? (fixed.size ? 'fixed' : 'clean') : 'fail',
+      fixedCount: fixed.size,
+      erasedCount: erasePos.length,
       dataGlobal: blk.dataGlobal,
       ecGlobal: blk.ecGlobal,
       globals,
@@ -61,6 +69,7 @@ function decodeMatrix(getBit, version, opts = {}) {
         raw: cwRaw[g] || 0,
         val: res.ok ? res.out[j] : (cwRaw[g] || 0),
         fixed: res.ok && fixed.has(j),
+        erased: !!cwErased[g],
         isEC: j >= blk.numData,
         block: b,
         modules,

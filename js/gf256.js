@@ -24,11 +24,18 @@ const GF = (() => {
 })();
 
 // Decode one RS(n, n-nsym) codeword block. msgIn = data||ec bytes, nsym = #ec bytes.
-// Returns {ok, out, errors} where errors = corrected byte positions (0 = first byte).
-function rsDecode(msgIn, nsym) {
+// erasePos = byte positions known to be unreliable (erasures). RS can correct
+// e errors + f erasures when 2e + f <= nsym, so known-location damage costs half.
+// Returns {ok, out, errors, erasures}: errors = corrected unknown-position bytes,
+// erasures = erasure positions whose byte actually changed (0 = first byte).
+function rsDecode(msgIn, nsym, erasePos = []) {
   const { EXP, LOG, mul, inv } = GF;
   const n = msgIn.length;
   const msg = Array.from(msgIn);
+  const fail = () => ({ ok: false, out: Array.from(msgIn), errors: [], erasures: [] });
+  const erase = [...new Set(erasePos)].filter(p => p >= 0 && p < n);
+  const f = erase.length;
+  if (f > nsym) return fail();
 
   // Syndromes s_k = M(alpha^k), k = 0..nsym-1 (QR uses fcr=0).
   const synd = new Array(nsym);
@@ -40,13 +47,35 @@ function rsDecode(msgIn, nsym) {
     synd[k] = s;
     if (s !== 0) allZero = false;
   }
-  if (allZero) return { ok: true, out: msg, errors: [] };
+  if (allZero) return { ok: true, out: msg, errors: [], erasures: [] };
 
-  // Berlekamp–Massey: find error locator polynomial C (ascending powers).
+  // Erasure locator Γ(x) = Π (1 + alpha^p x), p = n-1-pos (ascending powers).
+  let gamma = [1];
+  for (const pos of erase) {
+    const ap = EXP[(n - 1 - pos) % 255];
+    const next = new Array(gamma.length + 1).fill(0);
+    for (let i = 0; i < gamma.length; i++) {
+      next[i] ^= gamma[i];
+      next[i + 1] ^= mul(gamma[i], ap);
+    }
+    gamma = next;
+  }
+
+  // Modified (Forney) syndromes T = S·Γ mod x^nsym; the tail T[f..] obeys the
+  // recurrence of the unknown-error locator alone.
+  const tSynd = new Array(nsym);
+  for (let k = 0; k < nsym; k++) {
+    let s = 0;
+    for (let i = 0; i <= Math.min(k, f); i++) s ^= mul(gamma[i] || 0, synd[k - i]);
+    tSynd[k] = s;
+  }
+  const u = tSynd.slice(f); // syndrome sequence for BM, length nsym - f
+
+  // Berlekamp–Massey on u: find unknown-error locator polynomial C (ascending).
   let C = [1], B = [1], L = 0, m = 1, b = 1;
-  for (let step = 0; step < nsym; step++) {
-    let d = synd[step];
-    for (let i = 1; i <= L; i++) d ^= mul(C[i] || 0, synd[step - i]);
+  for (let step = 0; step < u.length; step++) {
+    let d = u[step];
+    for (let i = 1; i <= L; i++) d ^= mul(C[i] || 0, u[step - i]);
     if (d === 0) {
       m++;
     } else if (2 * L <= step) {
@@ -63,45 +92,56 @@ function rsDecode(msgIn, nsym) {
       m++;
     }
   }
-  if (2 * L > nsym) return { ok: false, out: msg, errors: [] };
+  if (2 * L > nsym - f) return fail();
 
   // Chien search: byte i corresponds to power p = n-1-i; root when C(alpha^-p) = 0.
   const errPos = [];
-  for (let i = 0; i < n; i++) {
-    const p = n - 1 - i;
-    const xinv = (255 - (p % 255)) % 255;
-    let sum = 0;
-    for (let k = 0; k < C.length; k++) {
-      const ck = C[k] || 0;
-      if (ck !== 0) sum ^= EXP[(LOG[ck] + k * xinv) % 255];
+  if (L > 0) {
+    for (let i = 0; i < n; i++) {
+      const p = n - 1 - i;
+      const xinv = (255 - (p % 255)) % 255;
+      let sum = 0;
+      for (let k = 0; k < C.length; k++) {
+        const ck = C[k] || 0;
+        if (ck !== 0) sum ^= EXP[(LOG[ck] + k * xinv) % 255];
+      }
+      if (sum === 0) errPos.push(i);
     }
-    if (sum === 0) errPos.push(i);
+    if (errPos.length !== L) return fail();
   }
-  if (errPos.length !== L) return { ok: false, out: msg, errors: [] };
 
-  // Solve for error magnitudes: sum_j e_j * alpha^(k*p_j) = synd[k], k = 0..L-1.
+  // Solve magnitudes over all positions (erasures + errors) against the original
+  // syndromes: sum_j e_j * alpha^(k*p_j) = synd[k], k = 0..P-1.
+  const pos = [...new Set([...erase, ...errPos])].sort((a, c) => a - c);
+  const P = pos.length;
+  if (P === 0 || P > nsym) return fail();
   const A = [];
-  for (let k = 0; k < L; k++) {
-    const row = new Array(L + 1);
-    for (let j = 0; j < L; j++) {
-      const p = n - 1 - errPos[j];
+  for (let k = 0; k < P; k++) {
+    const row = new Array(P + 1);
+    for (let j = 0; j < P; j++) {
+      const p = n - 1 - pos[j];
       row[j] = EXP[(k * p) % 255];
     }
-    row[L] = synd[k];
+    row[P] = synd[k];
     A.push(row);
   }
-  const mags = gfSolve(A, L);
-  if (!mags) return { ok: false, out: msg, errors: [] };
-  for (let j = 0; j < L; j++) msg[errPos[j]] ^= mags[j];
+  const mags = gfSolve(A, P);
+  if (!mags) return fail();
+  for (let j = 0; j < P; j++) msg[pos[j]] ^= mags[j];
 
   // Verify: all syndromes must now be zero.
   for (let k = 0; k < nsym; k++) {
     let s = 0;
     const ak = EXP[k % 255];
     for (let i = 0; i < n; i++) s = mul(s, ak) ^ msg[i];
-    if (s !== 0) return { ok: false, out: Array.from(msgIn), errors: [] };
+    if (s !== 0) return fail();
   }
-  return { ok: true, out: msg, errors: errPos };
+  const eraseSet = new Set(erase);
+  return {
+    ok: true, out: msg,
+    errors: pos.filter(p => !eraseSet.has(p)),
+    erasures: pos.filter(p => eraseSet.has(p) && msg[p] !== msgIn[p]),
+  };
 }
 
 // Gaussian elimination over GF(256); A is L rows of L+1 (augmented). Returns solution or null.

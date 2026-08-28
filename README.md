@@ -41,13 +41,26 @@ picks up right where you left off. Loading a new image replaces the stored sessi
    every codeword grouped by error-correction block. Reed-Solomon runs per block, so
    an uncorrectable block doesn't stop the rest from decoding (partial decoding).
    Characters that depend on a failed block are flagged red as suspect.
-4. **Fix bits by hand** — click any module to cycle auto → force-black → force-white
-   → auto (right-click resets), or use the small dropdown that appears under a
-   hovered dot to pick force ■ / force □ / auto directly (the auto row shows the
-   detected value). Clicking through a warp diamond toggles the module beneath it;
-   dragging the diamond moves the grid. Forced modules are marked with red squares.
-   The decode updates live, and corrected codewords report what changed. A legend
-   at the bottom of the sidebar explains every marker and color.
+4. **Fix bits by hand** — click any module to cycle auto → force-white → force-black
+   → ignore → auto (right-click resets), or use the small dropdown that appears
+   under a hovered dot to pick force ■ / force □ / ignore / auto directly (the auto
+   row shows the detected value). Clicking through a warp diamond toggles the module
+   beneath it; dragging the diamond moves the grid. Forced modules are marked with
+   red squares, ignored ones with gray ×. The decode updates live, and corrected
+   codewords report what changed. A legend at the bottom of the sidebar explains
+   every marker and color.
+
+   **Ignore = erasure.** When part of the symbol is known to be unreadable — a logo
+   printed over the middle, a hole, a sticker — mark it ignored (shift-drag draws a
+   rectangle over a whole area; shift-drag again to unmark). Every codeword touching
+   an ignored module is decoded as a Reed-Solomon *erasure*: the decoder knows
+   *where* the damage is, so it only has to solve for the values. That doubles the
+   correction budget (2·errors + erasures ≤ EC codewords per block, vs. errors ≤
+   half that), and it stops garbage samples under the logo from poisoning blocks
+   that would otherwise be recoverable. Block chips show an `e`-count of erased
+   codewords. One caveat: erasures spend real parity — at full erasure capacity
+   there is no margin left to *detect* additional unknown errors, so mark what is
+   actually damaged, not more.
 5. **Trace provenance** — hover a decoded character, codeword, segment, or block
    chip and the exact source modules light up on the image (strong = the exact bits,
    medium = the full codeword, faint = the whole EC block). Hover a module on the
@@ -62,7 +75,7 @@ both can be overridden manually when those regions are damaged.
 
 | file | contents |
 | --- | --- |
-| `js/gf256.js` | GF(256) arithmetic, Reed-Solomon decoder (Berlekamp-Massey + Chien + GF Gaussian solve, verified) |
+| `js/gf256.js` | GF(256) arithmetic, Reed-Solomon decoder with erasure support (Forney syndromes + Berlekamp-Massey + Chien + GF Gaussian solve, verified) |
 | `js/qrspec.js` | spec tables: EC blocks per version/level, masks, format/version info BCH, alignment positions, interleaving |
 | `js/matrix.js` | function-pattern map and zigzag data-module read order |
 | `js/decode.js` | matrix → codewords → per-block RS → bitstream parse (numeric/alnum/byte/kanji/ECI), with bit→module provenance kept throughout |

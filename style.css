@@ -187,6 +187,9 @@ main {
 .cw.ec { color: var(--dim); }
 .cw.fixed { color: var(--red); text-decoration: underline; }
 .cw.fixed.hl { background: var(--red); color: var(--bg); }
+.cw.erased { background: #ececec; color: #666; }
+.cw.erased.fixed { color: var(--red); }
+.cw.erased.hl { background: var(--fg); color: var(--bg); }
 .hl-blk { outline: 2px solid var(--fg); }
 .cwblock.failed .cw:not(.ec) { text-decoration: underline dotted; }
 
@@ -229,6 +232,7 @@ main {
 .lg-dot-badb { border-radius: 50%; background: #a01515; box-shadow: 0 0 0 1px #fff, 0 0 0 2px #a01515; }
 .lg-dot-badw { border-radius: 50%; background: #ffc4c4; border: 1px solid #d92b2b; }
 .lg-forced { border: 1.5px solid var(--red); }
+.lg-ignore { color: #666; font-weight: 700; line-height: 11px; text-align: center; }
 .lg-corner { background: #2979ff; border: 2px solid #fff; box-shadow: 0 0 0 1px #2979ff; }
 .lg-diamond { border: 2px solid #2979ff; transform: rotate(45deg) scale(0.85); }
 .lg-rotate { border: 2px solid #2979ff; border-radius: 50%; border-top-color: transparent; transform: rotate(-45deg); }
@@ -236,6 +240,7 @@ main {
 .lg-sample { flex: 0 0 auto; min-width: 11px; text-align: center; color: var(--fg); }
 .lg-suspect { color: var(--red); text-decoration: underline dotted; }
 .lg-fixed { color: var(--red); text-decoration: underline; }
+.lg-erased { color: #666; background: #ececec; }
 
 .chip {
   display: inline-block;

@@ -15,7 +15,7 @@ const state = {
   ecOverride: null,    // null = auto
   maskOverride: null,  // null = auto
   thrOffset: 0,
-  overrides: new Map(),// moduleIdx -> 0|1 (forced bits)
+  overrides: new Map(),// moduleIdx -> 0|1 (forced bit) | 2 (ignored: RS erasure)
   view: { scale: 1, ox: 20, oy: 20 },
   sample: null,        // {means, bits, threshold}
   result: null,
@@ -345,8 +345,12 @@ function getEffectiveBit(r, c) {
   const size = gridSize();
   const i = r * size + c;
   const ovr = state.overrides.get(i);
-  if (ovr !== undefined) return ovr;
+  if (ovr === 0 || ovr === 1) return ovr;
   return state.sample ? state.sample.bits[i] : 0;
+}
+
+function isIgnoredModule(r, c) {
+  return state.overrides.get(r * gridSize() + c) === 2;
 }
 
 function decode() {
@@ -354,6 +358,7 @@ function decode() {
   state.result = decodeMatrix(getEffectiveBit, state.version, {
     ecOverride: state.ecOverride,
     maskOverride: state.maskOverride,
+    isIgnored: isIgnoredModule,
   });
   gToStream = new Map();
   state.result.stream.toGlobal.forEach((g, i) => gToStream.set(g, i));
@@ -475,17 +480,21 @@ function draw() {
     const r = Math.min(7, Math.max(1.4, mpx * 0.22));
     const black = new Path2D(), white = new Path2D();
     const badBlack = new Path2D(), badWhite = new Path2D();
-    const forced = [];
+    const forced = [], ignored = [];
     for (let row = 0; row < size; row++) {
       for (let col = 0; col < size; col++) {
         const i = row * size + col;
         const p = gridToScreen(col + 0.5, row + 0.5);
+        const ovr = state.overrides.get(i);
         const bit = getEffectiveBit(row, col);
         const exp = expectedBit(i, layout.expected, dyn);
-        const path = exp >= 0 && exp !== bit ? (bit ? badBlack : badWhite) : (bit ? black : white);
+        // Ignored modules are known damage — no point tinting them as mismatches.
+        const bad = ovr !== 2 && exp >= 0 && exp !== bit;
+        const path = bad ? (bit ? badBlack : badWhite) : (bit ? black : white);
         path.moveTo(p.x + r, p.y);
         path.arc(p.x, p.y, r, 0, Math.PI * 2);
-        if (state.overrides.has(i)) forced.push(p);
+        if (ovr === 2) ignored.push(p);
+        else if (ovr !== undefined) forced.push(p);
       }
     }
     ctx.lineWidth = 1;
@@ -514,6 +523,33 @@ function draw() {
       for (const p of forced) ctx.rect(p.x - s, p.y - s, s * 2, s * 2);
       ctx.stroke();
     }
+    // Ignored modules: gray × marker (codeword becomes an RS erasure).
+    if (ignored.length) {
+      const s = r * 1.5;
+      ctx.beginPath();
+      for (const p of ignored) {
+        ctx.moveTo(p.x - s, p.y - s); ctx.lineTo(p.x + s, p.y + s);
+        ctx.moveTo(p.x + s, p.y - s); ctx.lineTo(p.x - s, p.y + s);
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  // Marquee (shift-drag): dashed rectangle while marking an ignore area.
+  if (state.marquee) {
+    const mq = state.marquee;
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(Math.min(mq.x0, mq.x1), Math.min(mq.y0, mq.y1),
+                   Math.abs(mq.x1 - mq.x0), Math.abs(mq.y1 - mq.y0));
+    ctx.restore();
   }
 
   // Control handles: bright blue — squares for corners, diamonds for warp points.
@@ -616,7 +652,7 @@ function countMismatches() {
   let bad = 0, total = 0;
   for (let i = 0; i < size * size; i++) {
     const e = expectedBit(i, layout.expected, dyn);
-    if (e < 0) continue;
+    if (e < 0 || state.overrides.get(i) === 2) continue; // ignored = known damage
     total++;
     if (getEffectiveBit((i / size) | 0, i % size) !== e) bad++;
   }
@@ -664,7 +700,7 @@ function wireEvents() {
     const row = e.target.closest('[data-act]');
     if (!row || menuModule == null) return;
     if (row.dataset.act === 'auto') state.overrides.delete(menuModule);
-    else state.overrides.set(menuModule, +row.dataset.act);
+    else state.overrides.set(menuModule, row.dataset.act === 'x' ? 2 : +row.dataset.act);
     refresh(false);
     renderDotMenu();
   });
@@ -799,6 +835,13 @@ function onPointerDown(e) {
   if (e.button !== 0) return;
   const p = canvasPos(e);
   canvas.setPointerCapture(e.pointerId);
+  // Shift-drag: marquee to mark (or unmark) an area of modules as ignored.
+  if (e.shiftKey && state.corners && state.sample) {
+    drag = { mode: 'marquee', start: p, moved: false };
+    hideDotMenu();
+    hideHandleTip();
+    return;
+  }
   const ri = hitRotHandle(p.x, p.y);
   if (ri >= 0 && state.corners) {
     const ip = screenToImg(p.x, p.y);
@@ -832,6 +875,13 @@ function onPointerMove(e) {
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
     if (drag.moved) { hideDotMenu(); hideHandleTip(); }
+    if (drag.mode === 'marquee') {
+      if (drag.moved) {
+        state.marquee = { x0: drag.start.x, y0: drag.start.y, x1: p.x, y1: p.y };
+        draw();
+      }
+      return;
+    }
     if (drag.mode === 'rotate' && drag.moved) {
       const ip = screenToImg(p.x, p.y);
       const a = Math.atan2(ip.y - drag.center.y, ip.x - drag.center.x);
@@ -896,6 +946,12 @@ function onPointerUp(e) {
   drag = null;
   dragActive = false;
   if (!wasDrag) return;
+  if (wasDrag.mode === 'marquee') {
+    state.marquee = null;
+    if (wasDrag.moved) applyMarquee(wasDrag.start, p);
+    else draw();
+    return;
+  }
   if (!wasDrag.moved) {
     // A plain click on a diamond handle acts on the module beneath it; a click on
     // a corner handle keeps its selection; a click elsewhere toggles that module.
@@ -915,6 +971,32 @@ function onPointerUp(e) {
   } else if (wasDrag.mode === 'pan') {
     scheduleSave(); // view changed without a refresh
   }
+}
+
+// Mark every module whose center falls in the screen rect as ignored; if they
+// all already are, unmark them instead (so shift-drag toggles cleanly).
+function applyMarquee(a, b) {
+  if (!state.corners || !state.sample) return;
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const size = gridSize();
+  const hit = [];
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const p = gridToScreen(c + 0.5, r + 0.5);
+      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) hit.push(r * size + c);
+    }
+  }
+  if (!hit.length) { draw(); return; }
+  const allIgnored = hit.every(i => state.overrides.get(i) === 2);
+  for (const i of hit) {
+    if (allIgnored) state.overrides.delete(i);
+    else state.overrides.set(i, 2);
+  }
+  setMessage(allIgnored
+    ? `unmarked ${hit.length} ignored module${hit.length > 1 ? 's' : ''}`
+    : `ignoring ${hit.length} module${hit.length > 1 ? 's' : ''} — their codewords decode as erasures`);
+  refresh(false);
 }
 
 function onContextMenu(e) {
@@ -957,6 +1039,7 @@ function renderDotMenu() {
   const rows = [
     { act: '0', label: 'force □', active: ovr === 0 },
     { act: '1', label: 'force ■', active: ovr === 1 },
+    { act: 'x', label: 'ignore (damaged)', active: ovr === 2 },
     { act: 'auto', label: `auto (${sampled ? '■' : '□'})`, active: ovr === undefined },
   ];
   el.textContent = '';
@@ -993,11 +1076,12 @@ function hideHandleTip() {
   $('handle-tip').hidden = true;
 }
 
-// auto -> force dark -> force light -> auto
+// Cycle in menu order, top to bottom: force light -> force dark -> ignore -> auto.
 function cycleOverride(i) {
   const cur = state.overrides.get(i);
-  if (cur === undefined) state.overrides.set(i, 1);
-  else if (cur === 1) state.overrides.set(i, 0);
+  if (cur === undefined) state.overrides.set(i, 0);
+  else if (cur === 0) state.overrides.set(i, 1);
+  else if (cur === 1) state.overrides.set(i, 2);
   else state.overrides.delete(i);
 }
 
@@ -1051,9 +1135,10 @@ function updateStatus(m) {
     const i = m.i;
     const forced = state.overrides.get(i);
     const bit = getEffectiveBit(m.r, m.c);
-    parts.push(`module (${m.r},${m.c}) lum ${state.sample.means[i].toFixed(0)} → ${bit ? '■' : '□'}${forced !== undefined ? ' forced' : ''}`);
+    parts.push(`module (${m.r},${m.c}) lum ${state.sample.means[i].toFixed(0)} → ${bit ? '■' : '□'}` +
+      (forced === 2 ? ' ignored' : forced !== undefined ? ' forced' : ''));
     const exp = expectedBit(i, getLayout(state.version).expected, dynamicExpected());
-    if (exp >= 0 && exp !== bit) parts.push(`expected ${exp ? '■' : '□'}`);
+    if (exp >= 0 && exp !== bit && forced !== 2) parts.push(`expected ${exp ? '■' : '□'}`);
     if (state.result) {
       const g = state.result.moduleToCw[i];
       if (g >= 0) {
@@ -1212,9 +1297,11 @@ function renderOutput() {
 
   const failed = res.blocks.filter(b => b.status === 'fail').length;
   const fixedTotal = res.blocks.reduce((s, b) => s + b.fixedCount, 0);
+  const erasedTotal = res.blocks.reduce((s, b) => s + (b.erasedCount || 0), 0);
   let st, cls;
   if (failed === 0 && !res.parsed.error) {
     st = fixedTotal ? `OK — ${fixedTotal} codeword${fixedTotal > 1 ? 's' : ''} corrected` : 'OK';
+    if (erasedTotal) st += ` (${erasedTotal} erased)`;
     cls = 'ok';
   } else {
     const bits = [];
@@ -1270,16 +1357,18 @@ function renderOutput() {
     head.className = 'bhead';
     head.dataset.block = blk.index;
     head.textContent = `B${blk.index + 1} ` +
-      (blk.status === 'fail' ? '✕' : blk.status === 'fixed' ? `+${blk.fixedCount}` : '✓');
+      (blk.status === 'fail' ? '✕' : blk.status === 'fixed' ? `+${blk.fixedCount}` : '✓') +
+      (blk.erasedCount ? ` e${blk.erasedCount}` : '');
     row.appendChild(head);
     blockHeadEls[blk.index] = head;
     for (const g of blk.globals) {
       const cw = res.cw[g];
       const sp = document.createElement('span');
-      sp.className = 'cw' + (cw.isEC ? ' ec' : '') + (cw.fixed ? ' fixed' : '');
+      sp.className = 'cw' + (cw.isEC ? ' ec' : '') + (cw.fixed ? ' fixed' : '') + (cw.erased ? ' erased' : '');
       sp.dataset.g = g;
       sp.textContent = cw.val.toString(16).padStart(2, '0');
       sp.title = `cw #${g} · block ${cw.block + 1} · ${cw.isEC ? 'EC' : 'data'}` +
+        (cw.erased ? ' · erased (has ignored modules)' : '') +
         (cw.fixed ? ` · corrected ${cw.raw.toString(16).padStart(2, '0')}→${cw.val.toString(16).padStart(2, '0')}` : '');
       row.appendChild(sp);
       cwEls[g] = sp;
@@ -1314,7 +1403,10 @@ function renderSidebar() {
     $('version-info').textContent = '';
   }
 
-  $('override-info').textContent = `${state.overrides.size} forced module${state.overrides.size === 1 ? '' : 's'}`;
+  let nForced = 0, nIgnored = 0;
+  for (const v of state.overrides.values()) v === 2 ? nIgnored++ : nForced++;
+  $('override-info').textContent =
+    `${nForced} forced · ${nIgnored} ignored`;
 
   // Known-pattern agreement (alignment quality signal).
   const mm = countMismatches();
@@ -1338,9 +1430,11 @@ function renderSidebar() {
       const chip = document.createElement('span');
       chip.className = 'chip ' + blk.status;
       chip.dataset.block = blk.index;
-      chip.textContent = `B${blk.index + 1}${blk.status === 'fail' ? '✕' : blk.status === 'fixed' ? `+${blk.fixedCount}` : '✓'}`;
+      chip.textContent = `B${blk.index + 1}${blk.status === 'fail' ? '✕' : blk.status === 'fixed' ? `+${blk.fixedCount}` : '✓'}` +
+        (blk.erasedCount ? `e${blk.erasedCount}` : '');
       chip.title = `block ${blk.index + 1}: ${blk.dataGlobal.length} data + ${blk.ecGlobal.length} EC codewords — ` +
-        (blk.status === 'fail' ? 'uncorrectable' : blk.status === 'fixed' ? `${blk.fixedCount} corrected` : 'clean');
+        (blk.status === 'fail' ? 'uncorrectable' : blk.status === 'fixed' ? `${blk.fixedCount} corrected` : 'clean') +
+        (blk.erasedCount ? ` · ${blk.erasedCount} erased (budget: 2·errors + erasures ≤ ${res.ecPer})` : '');
       bl.appendChild(chip);
       blockChipEls[blk.index] = chip;
     }
