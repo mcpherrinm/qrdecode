@@ -904,6 +904,22 @@ function wireEvents() {
   $('output').addEventListener('mouseout', () => setHover(null));
   $('sidebar').addEventListener('mouseover', onOutputHover);
   $('sidebar').addEventListener('mouseout', () => setHover(null));
+
+  // Mobile: sidebar toggle
+  $('btn-sidebar-toggle').addEventListener('click', () => {
+    $('sidebar').classList.toggle('open');
+  });
+
+  // Mobile: maximize canvas button
+  $('btn-maximize').addEventListener('click', () => {
+    const wrap = $('canvas-wrap');
+    const maximized = wrap.classList.toggle('maximized');
+    $('btn-maximize').textContent = maximized ? '✕' : '⤢';
+    // ResizeObserver in setupCanvasSize() will fire automatically.
+  });
+
+  // Touch pinch-to-zoom and pan
+  wireTouchEvents();
 }
 
 function canvasPos(e) {
@@ -1350,6 +1366,81 @@ function onWheel(e) {
   draw();
   scheduleSave();
 }
+
+// ---------------------------------------------------------------- touch events
+
+function wireTouchEvents() {
+  // Pointer events handle single-touch drag/pan already (the browser maps touch
+  // to pointer events). We only need to add a separate two-finger gesture handler
+  // for pinch-to-zoom and two-finger pan on top of that.
+  let touches = [];
+  let lastDist = 0;
+  let lastMid = null;
+
+  function midpoint(t0, t1) {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: (t0.clientX + t1.clientX) / 2 - r.left,
+      y: (t0.clientY + t1.clientY) / 2 - r.top,
+    };
+  }
+  function dist(t0, t1) {
+    const dx = t0.clientX - t1.clientX;
+    const dy = t0.clientY - t1.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      // Two fingers: cancel any single-pointer drag and take over for pinch.
+      e.preventDefault();
+      drag = null;
+      dragActive = false;
+      touches = Array.from(e.touches);
+      lastDist = dist(touches[0], touches[1]);
+      lastMid = midpoint(touches[0], touches[1]);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    const t = Array.from(e.touches);
+    const d = dist(t[0], t[1]);
+    const m = midpoint(t[0], t[1]);
+
+    // Pinch zoom
+    if (lastDist > 0) {
+      const factor = d / lastDist;
+      const ns = Math.min(200, Math.max(0.02, state.view.scale * factor));
+      const k = ns / state.view.scale;
+      state.view.ox = m.x - (m.x - state.view.ox) * k;
+      state.view.oy = m.y - (m.y - state.view.oy) * k;
+      state.view.scale = ns;
+    }
+
+    // Two-finger pan
+    if (lastMid) {
+      state.view.ox += m.x - lastMid.x;
+      state.view.oy += m.y - lastMid.y;
+    }
+
+    lastDist = d;
+    lastMid = m;
+    hideDotMenu();
+    hideHandleTip();
+    draw();
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    if (e.touches.length < 2) {
+      lastDist = 0;
+      lastMid = null;
+      if (e.touches.length < 2) scheduleSave();
+    }
+  }, { passive: true });
+}
+
 
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
