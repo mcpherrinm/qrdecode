@@ -817,10 +817,17 @@ function drawCells(modSet, fill, stroke, lw) {
 
 let drag = null;
 
+// Multi-touch pinch: pointers currently down on the canvas (id → canvas pos)
+// and the pinch baselines. pinchMid === null means no pinch in progress.
+const activePointers = new Map();
+let pinchDist = 0;
+let pinchMid = null;
+
 function wireEvents() {
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('pointerleave', () => {
     if (!drag) setHover(null);
     updateStatus(null);
@@ -904,6 +911,27 @@ function wireEvents() {
   $('output').addEventListener('mouseout', () => setHover(null));
   $('sidebar').addEventListener('mouseover', onOutputHover);
   $('sidebar').addEventListener('mouseout', () => setHover(null));
+
+  // Mobile: sidebar toggle
+  $('btn-sidebar-toggle').addEventListener('click', () => {
+    $('sidebar').classList.toggle('open');
+  });
+
+  // Mobile: maximize canvas button
+  $('btn-maximize').addEventListener('click', () => {
+    const wrap = $('canvas-wrap');
+    const maximized = wrap.classList.toggle('maximized');
+    $('btn-maximize').textContent = maximized ? '✕' : '⤢';
+    // ResizeObserver in setupCanvasSize() will fire automatically.
+  });
+
+  // The 'open' class is only styled — and its toggle button only visible —
+  // below the mobile breakpoint, so clear it when leaving (e.g. rotating a
+  // phone to landscape) or it strands in effect-less state.
+  const mobileMq = window.matchMedia('(max-width: 640px)');
+  mobileMq.addEventListener('change', () => {
+    if (!mobileMq.matches) $('sidebar').classList.remove('open');
+  });
 }
 
 function canvasPos(e) {
@@ -1014,6 +1042,17 @@ function onPointerDown(e) {
   if (e.button !== 0) return;
   const p = canvasPos(e);
   canvas.setPointerCapture(e.pointerId);
+  activePointers.set(e.pointerId, p);
+  if (activePointers.size === 2) {
+    // A second finger turns the gesture into a pinch: wind down any
+    // single-pointer drag cleanly before taking over.
+    cancelDrag();
+    hideDotMenu();
+    hideHandleTip();
+    startPinch();
+    return;
+  }
+  if (activePointers.size > 2) return; // extra fingers don't disturb the pinch pair
   // Shift-drag: marquee to mark (or unmark) an area of modules as ignored.
   if (e.shiftKey && state.corners && state.sample) {
     drag = { mode: 'marquee', start: p, moved: false };
@@ -1075,6 +1114,20 @@ function onPointerDown(e) {
 
 function onPointerMove(e) {
   const p = canvasPos(e);
+  if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, p);
+  if (pinchMid) {
+    if (!activePointers.has(e.pointerId)) return;
+    const [a, b] = pinchPair();
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (pinchDist > 0) zoomAt(m, d / pinchDist);
+    state.view.ox += m.x - pinchMid.x;
+    state.view.oy += m.y - pinchMid.y;
+    pinchDist = d;
+    pinchMid = m;
+    draw();
+    return;
+  }
   if (drag) {
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
     if (!drag.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
@@ -1142,6 +1195,9 @@ function onPointerMove(e) {
     }
     return;
   }
+  // A finger can't hover: without this, the finger left resting after a pinch
+  // would pop the dot menu and hover UI under itself.
+  if (e.pointerType === 'touch') return;
   // Hover: status, cross-highlight, dot menu / handle tip.
   if (state.corners && hitRotHandle(p.x, p.y)) {
     showHandleTip(rotHandlePosition(), 'drag to rotate');
@@ -1187,6 +1243,12 @@ function onPointerMove(e) {
 }
 
 function onPointerUp(e) {
+  if (!activePointers.delete(e.pointerId)) return;
+  if (pinchMid) {
+    if (activePointers.size >= 2) startPinch(); // rebase to the remaining pair
+    else endPinch();
+    return;
+  }
   const p = canvasPos(e);
   const wasDrag = drag;
   const wasActive = dragActive;
@@ -1218,6 +1280,54 @@ function onPointerUp(e) {
   } else if (wasDrag.mode === 'pan') {
     scheduleSave(); // view changed without a refresh
   }
+}
+
+// The browser took the pointer away (e.g. the OS interrupted the gesture):
+// wind everything down without applying any click behavior.
+function onPointerCancel(e) {
+  if (!activePointers.delete(e.pointerId)) return;
+  if (pinchMid) {
+    if (activePointers.size >= 2) startPinch();
+    else endPinch();
+    return;
+  }
+  cancelDrag();
+}
+
+// End a drag without click behavior, committing whatever it already changed.
+function cancelDrag() {
+  const wasDrag = drag;
+  const wasActive = dragActive;
+  drag = null;
+  dragActive = false;
+  if (!wasDrag) return;
+  if (wasDrag.mode === 'marquee') {
+    state.marquee = null;
+    draw();
+  } else if (wasDrag.moved && wasActive) {
+    refresh(true); // final full render after a handle drag
+  } else if (wasDrag.mode === 'pan') {
+    scheduleSave(); // view changed without a refresh
+  }
+}
+
+function pinchPair() {
+  const it = activePointers.values();
+  return [it.next().value, it.next().value];
+}
+
+// (Re)baseline the pinch from the first two active pointers. Called on any
+// finger-count change so a 3→2 transition never zooms against stale values.
+function startPinch() {
+  const [a, b] = pinchPair();
+  pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+  pinchMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function endPinch() {
+  pinchDist = 0;
+  pinchMid = null;
+  scheduleSave();
 }
 
 // Mark every module whose center falls in the screen rect as ignored; if they
@@ -1340,15 +1450,18 @@ function onWheel(e) {
   e.preventDefault();
   hideDotMenu();
   hideHandleTip();
-  const p = canvasPos(e);
-  const factor = Math.pow(1.0015, -e.deltaY);
+  zoomAt(canvasPos(e), Math.pow(1.0015, -e.deltaY));
+  draw();
+  scheduleSave();
+}
+
+// Zoom the view by `factor` about canvas point `p`, keeping `p` fixed on screen.
+function zoomAt(p, factor) {
   const ns = Math.min(200, Math.max(0.02, state.view.scale * factor));
   const k = ns / state.view.scale;
   state.view.ox = p.x - (p.x - state.view.ox) * k;
   state.view.oy = p.y - (p.y - state.view.oy) * k;
   state.view.scale = ns;
-  draw();
-  scheduleSave();
 }
 
 function onKeyDown(e) {
