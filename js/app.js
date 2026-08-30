@@ -817,10 +817,17 @@ function drawCells(modSet, fill, stroke, lw) {
 
 let drag = null;
 
+// Multi-touch pinch: pointers currently down on the canvas (id → canvas pos)
+// and the pinch baselines. pinchMid === null means no pinch in progress.
+const activePointers = new Map();
+let pinchDist = 0;
+let pinchMid = null;
+
 function wireEvents() {
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('pointerleave', () => {
     if (!drag) setHover(null);
     updateStatus(null);
@@ -918,8 +925,16 @@ function wireEvents() {
     // ResizeObserver in setupCanvasSize() will fire automatically.
   });
 
-  // Touch pinch-to-zoom and pan
-  wireTouchEvents();
+  // The 'open'/'maximized' classes are only styled — and their toggle buttons
+  // only visible — below the mobile breakpoint, so clear them when leaving it
+  // (e.g. rotating a phone to landscape) or they strand in effect-less state.
+  const mobileMq = window.matchMedia('(max-width: 640px)');
+  mobileMq.addEventListener('change', () => {
+    if (mobileMq.matches) return;
+    $('sidebar').classList.remove('open');
+    $('canvas-wrap').classList.remove('maximized');
+    $('btn-maximize').textContent = '⤢';
+  });
 }
 
 function canvasPos(e) {
@@ -1030,6 +1045,17 @@ function onPointerDown(e) {
   if (e.button !== 0) return;
   const p = canvasPos(e);
   canvas.setPointerCapture(e.pointerId);
+  activePointers.set(e.pointerId, p);
+  if (activePointers.size === 2) {
+    // A second finger turns the gesture into a pinch: wind down any
+    // single-pointer drag cleanly before taking over.
+    cancelDrag();
+    hideDotMenu();
+    hideHandleTip();
+    startPinch();
+    return;
+  }
+  if (activePointers.size > 2) return; // extra fingers don't disturb the pinch pair
   // Shift-drag: marquee to mark (or unmark) an area of modules as ignored.
   if (e.shiftKey && state.corners && state.sample) {
     drag = { mode: 'marquee', start: p, moved: false };
@@ -1091,6 +1117,20 @@ function onPointerDown(e) {
 
 function onPointerMove(e) {
   const p = canvasPos(e);
+  if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, p);
+  if (pinchMid) {
+    if (!activePointers.has(e.pointerId)) return;
+    const [a, b] = pinchPair();
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (pinchDist > 0) zoomAt(m, d / pinchDist);
+    state.view.ox += m.x - pinchMid.x;
+    state.view.oy += m.y - pinchMid.y;
+    pinchDist = d;
+    pinchMid = m;
+    draw();
+    return;
+  }
   if (drag) {
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
     if (!drag.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
@@ -1158,6 +1198,9 @@ function onPointerMove(e) {
     }
     return;
   }
+  // A finger can't hover: without this, the finger left resting after a pinch
+  // would pop the dot menu and hover UI under itself.
+  if (e.pointerType === 'touch') return;
   // Hover: status, cross-highlight, dot menu / handle tip.
   if (state.corners && hitRotHandle(p.x, p.y)) {
     showHandleTip(rotHandlePosition(), 'drag to rotate');
@@ -1203,6 +1246,12 @@ function onPointerMove(e) {
 }
 
 function onPointerUp(e) {
+  if (!activePointers.delete(e.pointerId)) return;
+  if (pinchMid) {
+    if (activePointers.size >= 2) startPinch(); // rebase to the remaining pair
+    else endPinch();
+    return;
+  }
   const p = canvasPos(e);
   const wasDrag = drag;
   const wasActive = dragActive;
@@ -1234,6 +1283,54 @@ function onPointerUp(e) {
   } else if (wasDrag.mode === 'pan') {
     scheduleSave(); // view changed without a refresh
   }
+}
+
+// The browser took the pointer away (e.g. the OS interrupted the gesture):
+// wind everything down without applying any click behavior.
+function onPointerCancel(e) {
+  if (!activePointers.delete(e.pointerId)) return;
+  if (pinchMid) {
+    if (activePointers.size >= 2) startPinch();
+    else endPinch();
+    return;
+  }
+  cancelDrag();
+}
+
+// End a drag without click behavior, committing whatever it already changed.
+function cancelDrag() {
+  const wasDrag = drag;
+  const wasActive = dragActive;
+  drag = null;
+  dragActive = false;
+  if (!wasDrag) return;
+  if (wasDrag.mode === 'marquee') {
+    state.marquee = null;
+    draw();
+  } else if (wasDrag.moved && wasActive) {
+    refresh(true); // final full render after a handle drag
+  } else if (wasDrag.mode === 'pan') {
+    scheduleSave(); // view changed without a refresh
+  }
+}
+
+function pinchPair() {
+  const it = activePointers.values();
+  return [it.next().value, it.next().value];
+}
+
+// (Re)baseline the pinch from the first two active pointers. Called on any
+// finger-count change so a 3→2 transition never zooms against stale values.
+function startPinch() {
+  const [a, b] = pinchPair();
+  pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+  pinchMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function endPinch() {
+  pinchDist = 0;
+  pinchMid = null;
+  scheduleSave();
 }
 
 // Mark every module whose center falls in the screen rect as ignored; if they
@@ -1356,91 +1453,19 @@ function onWheel(e) {
   e.preventDefault();
   hideDotMenu();
   hideHandleTip();
-  const p = canvasPos(e);
-  const factor = Math.pow(1.0015, -e.deltaY);
+  zoomAt(canvasPos(e), Math.pow(1.0015, -e.deltaY));
+  draw();
+  scheduleSave();
+}
+
+// Zoom the view by `factor` about canvas point `p`, keeping `p` fixed on screen.
+function zoomAt(p, factor) {
   const ns = Math.min(200, Math.max(0.02, state.view.scale * factor));
   const k = ns / state.view.scale;
   state.view.ox = p.x - (p.x - state.view.ox) * k;
   state.view.oy = p.y - (p.y - state.view.oy) * k;
   state.view.scale = ns;
-  draw();
-  scheduleSave();
 }
-
-// ---------------------------------------------------------------- touch events
-
-function wireTouchEvents() {
-  // Pointer events handle single-touch drag/pan already (the browser maps touch
-  // to pointer events). We only need to add a separate two-finger gesture handler
-  // for pinch-to-zoom and two-finger pan on top of that.
-  let touches = [];
-  let lastDist = 0;
-  let lastMid = null;
-
-  function midpoint(t0, t1) {
-    const r = canvas.getBoundingClientRect();
-    return {
-      x: (t0.clientX + t1.clientX) / 2 - r.left,
-      y: (t0.clientY + t1.clientY) / 2 - r.top,
-    };
-  }
-  function dist(t0, t1) {
-    const dx = t0.clientX - t1.clientX;
-    const dy = t0.clientY - t1.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-
-  canvas.addEventListener('touchstart', e => {
-    if (e.touches.length === 2) {
-      // Two fingers: cancel any single-pointer drag and take over for pinch.
-      e.preventDefault();
-      drag = null;
-      dragActive = false;
-      touches = Array.from(e.touches);
-      lastDist = dist(touches[0], touches[1]);
-      lastMid = midpoint(touches[0], touches[1]);
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchmove', e => {
-    if (e.touches.length !== 2) return;
-    e.preventDefault();
-    const t = Array.from(e.touches);
-    const d = dist(t[0], t[1]);
-    const m = midpoint(t[0], t[1]);
-
-    // Pinch zoom
-    if (lastDist > 0) {
-      const factor = d / lastDist;
-      const ns = Math.min(200, Math.max(0.02, state.view.scale * factor));
-      const k = ns / state.view.scale;
-      state.view.ox = m.x - (m.x - state.view.ox) * k;
-      state.view.oy = m.y - (m.y - state.view.oy) * k;
-      state.view.scale = ns;
-    }
-
-    // Two-finger pan
-    if (lastMid) {
-      state.view.ox += m.x - lastMid.x;
-      state.view.oy += m.y - lastMid.y;
-    }
-
-    lastDist = d;
-    lastMid = m;
-    hideDotMenu();
-    hideHandleTip();
-    draw();
-  }, { passive: false });
-
-  canvas.addEventListener('touchend', e => {
-    if (e.touches.length < 2) {
-      lastDist = 0;
-      lastMid = null;
-      if (e.touches.length < 2) scheduleSave();
-    }
-  }, { passive: true });
-}
-
 
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
