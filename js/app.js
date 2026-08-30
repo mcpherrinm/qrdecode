@@ -925,15 +925,12 @@ function wireEvents() {
     // ResizeObserver in setupCanvasSize() will fire automatically.
   });
 
-  // The 'open'/'maximized' classes are only styled — and their toggle buttons
-  // only visible — below the mobile breakpoint, so clear them when leaving it
-  // (e.g. rotating a phone to landscape) or they strand in effect-less state.
+  // The 'open' class is only styled — and its toggle button only visible —
+  // below the mobile breakpoint, so clear it when leaving (e.g. rotating a
+  // phone to landscape) or it strands in effect-less state.
   const mobileMq = window.matchMedia('(max-width: 640px)');
   mobileMq.addEventListener('change', () => {
-    if (mobileMq.matches) return;
-    $('sidebar').classList.remove('open');
-    $('canvas-wrap').classList.remove('maximized');
-    $('btn-maximize').textContent = '⤢';
+    if (!mobileMq.matches) $('sidebar').classList.remove('open');
   });
 }
 

@@ -291,6 +291,33 @@ input[type="checkbox"] { accent-color: #000; width: 14px; height: 14px; }
 
 ::selection { background: var(--fg); color: var(--bg); }
 
+/* ------------------------------------------------ canvas overlay button */
+.canvas-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 10;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+}
+.canvas-btn:hover { opacity: 1; }
+
+/* fullscreen canvas overlay */
+#canvas-wrap.maximized {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  min-height: 0;
+  background: #111;
+}
+#canvas-wrap.maximized #btn-maximize { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
+
 /* ------------------------------------------------ mobile */
 .mobile-only { display: none; }
 
@@ -343,29 +370,4 @@ input[type="checkbox"] { accent-color: #000; width: 14px; height: 14px; }
     display: none;
   }
   #sidebar.open { display: block; }
-
-  /* fullscreen canvas overlay */
-  #canvas-wrap.maximized {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    min-height: 0;
-    background: #111;
-  }
-  #canvas-wrap.maximized #btn-maximize { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
-
-  .canvas-btn {
-    position: absolute;
-    bottom: 8px;
-    right: 8px;
-    z-index: 10;
-    font-size: 18px;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.75;
-  }
-  .canvas-btn:hover { opacity: 1; }
 }
