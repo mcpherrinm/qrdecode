@@ -37,7 +37,11 @@ picks up right where you left off. Loading a new image replaces the stored sessi
    it follows exactly. A circular **rotate grabber** floats above the top edge (drag
    to spin the grid around its center), and **scale handles** — outward-pointing
    arrows outside each corner — resize the grid without warping it: width and
-   height scale independently, anchored at the opposite corner. A four-direction
+   height scale independently, anchored at the opposite corner. Dragging a scale
+   handle *past* the anchor flips the grid over it, which is how **mirrored QR
+   codes** (horizontal or vertical — a code seen through glass from the back, a
+   negative, a mis-printed transfer) are read: mirror the grid to match and the
+   sampler reads the symbol as if it were normal. A four-direction
    **move handle** below the bottom edge drags the whole grid rigidly.
    **Reset grid** returns to a flat, centered starting square. Every edit — grid
    geometry, forced/ignored modules, version/EC/mask/threshold — is undoable:

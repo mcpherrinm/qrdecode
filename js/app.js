@@ -1169,16 +1169,20 @@ function onPointerMove(e) {
       return;
     }
     // Scale the whole grid about the far corner, width and height independently.
+    // Negative factors are allowed: dragging through the anchor flips the grid,
+    // which is how mirrored QR codes are read.
     if (drag.mode === 'scale' && drag.moved) {
       const ip = screenToImg(p.x, p.y);
-      const clampK = v => Math.min(20, Math.max(0.05, v));
+      const clampK = v => (v < 0 ? -1 : 1) * Math.min(20, Math.max(0.05, Math.abs(v)));
       const kx = Math.abs(drag.d0x) < 1e-6 ? 1 : clampK((ip.x - drag.anchor.x) / drag.d0x);
       const ky = Math.abs(drag.d0y) < 1e-6 ? 1 : clampK((ip.y - drag.anchor.y) / drag.d0y);
       for (const s of drag.snap) {
         s.pt.x = drag.anchor.x + (s.x - drag.anchor.x) * kx;
         s.pt.y = drag.anchor.y + (s.y - drag.anchor.y) * ky;
       }
-      setMessage(`scaled ${(kx * 100).toFixed(0)}% × ${(ky * 100).toFixed(0)}%`);
+      const mirror = kx < 0 && ky < 0 ? ' · flipped both ways' :
+                     kx < 0 || ky < 0 ? ' · mirrored' : '';
+      setMessage(`scaled ${(kx * 100).toFixed(0)}% × ${(ky * 100).toFixed(0)}%${mirror}`);
       refresh(true);
       return;
     }
@@ -1215,7 +1219,7 @@ function onPointerMove(e) {
   }
   const si = state.corners ? hitScaleHandle(p.x, p.y) : -1;
   if (si >= 0) {
-    showHandleTip(scaleHandlePositions()[si], 'drag to scale');
+    showHandleTip(scaleHandlePositions()[si], 'drag to scale · past the far corner to mirror');
     scheduleMenuHide();
     setHover(null);
     updateStatus(null);
