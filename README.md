@@ -31,6 +31,12 @@ picks up right where you left off. Loading a new image replaces the stored sessi
    assumed EC+mask — are **tinted red when they disagree** with expectation, and the
    sidebar counts the mismatches, so you can see alignment quality at a glance.
 
+   A **quiet zone** selector shows 0–4 modules of the spec-required white border
+   around the symbol (the spec mandates 4), outlined with a dashed boundary.
+   Quiet modules are display-only — never fed to the decoder — but any that read
+   dark are tinted red and counted in the sidebar: another alignment cue, and a
+   quick check for text or artwork encroaching on the symbol.
+
    The grid is a warpable biquadratic surface with nine handles: corner squares for
    perspective, and edge-midpoint/center diamonds that bend it over **curved
    surfaces** (a label on a bottle, say) — drag any handle and the grid point under

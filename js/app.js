@@ -15,6 +15,7 @@ const state = {
   ecOverride: null,    // null = auto
   maskOverride: null,  // null = auto
   thrOffset: 0,
+  quietZone: 0,        // modules of quiet zone to show around the symbol (0-4), display-only
   overrides: new Map(),// moduleIdx -> 0|1 (forced bit) | 2 (ignored: RS erasure)
   view: { scale: 1, ox: 20, oy: 20 },
   sample: null,        // {means, bits, threshold}
@@ -54,6 +55,7 @@ function syncControls() {
   $('sel-mask').value = state.maskOverride == null ? 'auto' : String(state.maskOverride);
   $('rng-threshold').value = state.thrOffset;
   $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
+  $('sel-quiet').value = String(state.quietZone);
 }
 
 function setupCanvasSize() {
@@ -225,6 +227,7 @@ function saveState() {
     ecOverride: state.ecOverride,
     maskOverride: state.maskOverride,
     thrOffset: state.thrOffset,
+    quietZone: state.quietZone,
     overrides: [...state.overrides],
     view: { ...state.view },
   }).catch(() => {});
@@ -241,6 +244,7 @@ function applySavedState(saved) {
   state.ecOverride = saved.ecOverride;
   state.maskOverride = saved.maskOverride;
   state.thrOffset = saved.thrOffset;
+  state.quietZone = saved.quietZone || 0;
   state.overrides = new Map(saved.overrides);
   if (saved.view) state.view = { ...saved.view };
   state.selHandle = -1;
@@ -424,7 +428,29 @@ function resample() {
   const threshold = otsu(means) + state.thrOffset;
   const bits = new Uint8Array(size * size);
   for (let i = 0; i < bits.length; i++) bits[i] = means[i] <= threshold ? 1 : 0;
-  state.sample = { means, bits, threshold };
+
+  // Quiet-zone ring around the symbol, display-only (never fed to the decoder).
+  // Same threshold as the interior — otsu stays interior-only so a large white
+  // border can't skew it.
+  let quiet = null;
+  const q = state.quietZone;
+  if (q > 0) {
+    quiet = [];
+    for (let r = -q; r < size + q; r++) {
+      for (let c = -q; c < size + q; c++) {
+        if (r >= 0 && r < size && c >= 0 && c < size) continue;
+        let sum = 0;
+        for (const [dx, dy] of offsets) {
+          const p = map(c + 0.5 + dx, r + 0.5 + dy);
+          const x = Math.min(w - 1, Math.max(0, Math.round(p.x)));
+          const y = Math.min(h - 1, Math.max(0, Math.round(p.y)));
+          sum += gray[y * w + x];
+        }
+        quiet.push({ r, c, bit: sum / offsets.length <= threshold ? 1 : 0 });
+      }
+    }
+  }
+  state.sample = { means, bits, threshold, quiet };
 }
 
 function getEffectiveBit(r, c) {
@@ -550,6 +576,15 @@ function draw() {
   outline(size - 7, 0, size, 7, 1, '#000');
   outline(0, size - 7, 7, size, 1, '#000');
 
+  // Quiet-zone boundary: dashed, outside the symbol.
+  const qz = state.quietZone;
+  if (qz > 0) {
+    ctx.save();
+    ctx.setLineDash([4, 3]);
+    outline(-qz, -qz, size + qz, size + qz, 1, 'rgba(0,0,0,0.55)');
+    ctx.restore();
+  }
+
   // Highlight layers (under the dots). Green, so the trace reads apart from the
   // red error/forced markers.
   if (hover) {
@@ -565,6 +600,7 @@ function draw() {
     const layout = getLayout(state.version);
     const dyn = dynamicExpected();
     const r = Math.min(7, Math.max(1.4, mpx * 0.22));
+    const rKnown = r * 0.75; // known-value modules (and quiet zone): smaller dot
     const black = new Path2D(), white = new Path2D();
     const badBlack = new Path2D(), badWhite = new Path2D();
     const forced = [], ignored = [];
@@ -578,8 +614,9 @@ function draw() {
         // Ignored modules are known damage — no point tinting them as mismatches.
         const bad = ovr !== 2 && exp >= 0 && exp !== bit;
         const path = bad ? (bit ? badBlack : badWhite) : (bit ? black : white);
-        path.moveTo(p.x + r, p.y);
-        path.arc(p.x, p.y, r, 0, Math.PI * 2);
+        const rr = exp >= 0 ? rKnown : r;
+        path.moveTo(p.x + rr, p.y);
+        path.arc(p.x, p.y, rr, 0, Math.PI * 2);
         if (ovr === 2) ignored.push(p);
         else if (ovr !== undefined) forced.push(p);
       }
@@ -601,6 +638,26 @@ function draw() {
     ctx.fill(badWhite);
     ctx.strokeStyle = '#d92b2b';
     ctx.stroke(badWhite);
+    // Quiet-zone dots: the spec requires all white, so dark reads get the
+    // mismatch tint — anything red out there means encroachment or misalignment.
+    if (state.sample.quiet) {
+      const qDark = new Path2D(), qLight = new Path2D();
+      for (const m of state.sample.quiet) {
+        const p = gridToScreen(m.c + 0.5, m.r + 0.5);
+        const path = m.bit ? qDark : qLight;
+        path.moveTo(p.x + rKnown, p.y);
+        path.arc(p.x, p.y, rKnown, 0, Math.PI * 2);
+      }
+      ctx.lineWidth = 1;
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fill(qLight);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.stroke(qLight);
+      ctx.fillStyle = '#a01515';
+      ctx.fill(qDark);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke(qDark);
+    }
     // Forced modules: red square marker.
     if (forced.length) {
       ctx.strokeStyle = '#d92b2b';
@@ -888,6 +945,11 @@ function wireEvents() {
     pushHistory('thr');
     state.thrOffset = +e.target.value;
     $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
+    refresh(true);
+  });
+  // Display-only (doesn't affect the decode), so like pan/zoom it skips history.
+  $('sel-quiet').addEventListener('change', e => {
+    state.quietZone = +e.target.value;
     refresh(true);
   });
 
@@ -1797,10 +1859,18 @@ function renderSidebar() {
   const mm = countMismatches();
   const fnEl = $('fn-info');
   if (mm) {
-    fnEl.textContent = mm.bad === 0
+    let txt = mm.bad === 0
       ? `known patterns: all ${mm.total} match`
       : `known patterns: ${mm.bad}/${mm.total} mismatched`;
-    fnEl.className = 'mono-line' + (mm.bad > 0 ? ' err' : ' dim');
+    let err = mm.bad > 0;
+    const quiet = state.sample && state.sample.quiet;
+    if (quiet) {
+      const dark = quiet.reduce((n, m) => n + m.bit, 0);
+      txt += dark === 0 ? ' · quiet zone clean' : ` · quiet zone: ${dark} dark`;
+      err = err || dark > 0;
+    }
+    fnEl.textContent = txt;
+    fnEl.className = 'mono-line' + (err ? ' err' : ' dim');
   } else {
     fnEl.textContent = '';
     fnEl.className = 'mono-line dim';

@@ -212,7 +212,9 @@ main {
 }
 .row label { flex: 0 0 70px; color: var(--dim); }
 .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
-.mono-line { word-break: break-all; }
+/* Wrap at spaces; only split a word (e.g. a long bit string) when it can't fit
+   on a line of its own. */
+.mono-line { overflow-wrap: anywhere; }
 
 /* Legend swatches mirroring the canvas/output markers. */
 .lg {
