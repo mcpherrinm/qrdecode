@@ -5,6 +5,7 @@ const $ = id => document.getElementById(id);
 
 const state = {
   imgCanvas: null,     // offscreen canvas holding the original image
+  imgBlob: null,       // original image file bytes (for save-state and persistence)
   imgW: 0, imgH: 0,
   gray: null,          // Uint8Array luminance of the original image
   fileName: '',
@@ -82,8 +83,17 @@ function buildVersionSelect() {
 
 // ---------------------------------------------------------------- image loading
 
+// One entry point for every way a file arrives (open button, drop, paste):
+// .qrdecode state files — recognized by extension, or by magic when the name
+// doesn't say — restore a whole session; anything else is treated as an image.
 async function loadImageFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
+  if (!file) return;
+  const isImage = file.type.startsWith('image/');
+  if (/\.qrdecode$/i.test(file.name || '') ||
+      (!isImage && stateFileSniff(new Uint8Array(await file.slice(0, 4).arrayBuffer())))) {
+    return loadStateFile(file);
+  }
+  if (!isImage) return;
   let bmp;
   try {
     bmp = await createImageBitmap(file);
@@ -91,14 +101,72 @@ async function loadImageFile(file) {
     setMessage(`could not read image: ${e.message}`);
     return;
   }
-  applyImage(bmp, file.name || 'pasted image');
+  applyImage(bmp, file.name || 'pasted image', file);
   persistImage(file);
   fitView();
   runDetect();
   clearHistory(); // undo history belongs to the previous image
 }
 
-function applyImage(bmp, name) {
+// Save the whole session — decoder state + original image bytes — as one
+// .qrdecode file the load-state button (or a drop) can restore anywhere.
+async function saveStateFile() {
+  if (!state.imgCanvas || !state.corners) {
+    setMessage('nothing to save yet — load an image first');
+    return;
+  }
+  if (!state.warpPts) initWarpPts();
+  let blob = state.imgBlob;
+  if (!blob) blob = await new Promise(res => state.imgCanvas.toBlob(res, 'image/png'));
+  const bytes = stateFileEncode({
+    version: state.version,
+    imgW: state.imgW, imgH: state.imgH,
+    ecOverride: state.ecOverride,
+    maskOverride: state.maskOverride,
+    thrOffset: state.thrOffset,
+    quietZone: state.quietZone,
+    warpPts: state.warpPts,
+    overrides: state.overrides,
+  }, new Uint8Array(await blob.arrayBuffer()), state.fileName, blob.type || 'image/png');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  a.download = (state.fileName.replace(/\.[a-z0-9]+$/i, '') || 'session') + '.qrdecode';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  setMessage(`saved ${a.download} (${(bytes.length / 1024).toFixed(0)} KB)`);
+}
+
+async function loadStateFile(file) {
+  let dec;
+  try {
+    dec = stateFileDecode(new Uint8Array(await file.arrayBuffer()));
+  } catch (e) {
+    setMessage(`could not read state file: ${e.message}`);
+    return;
+  }
+  const blob = new Blob([dec.image.bytes], { type: dec.image.mime || 'image/png' });
+  let bmp;
+  try {
+    bmp = await createImageBitmap(blob);
+  } catch (e) {
+    setMessage(`state file's image is unreadable: ${e.message}`);
+    return;
+  }
+  applyImage(bmp, dec.image.name || file.name, blob);
+  persistImage(blob);
+  fitView();
+  applySavedState(dec);
+  refresh(true);
+  clearHistory();
+  if (bmp.width !== dec.imgW || bmp.height !== dec.imgH) {
+    setMessage(`loaded ${file.name}, but its grid was saved for a ${dec.imgW}×${dec.imgH} image`);
+  } else {
+    setMessage(`loaded ${file.name}`);
+  }
+}
+
+function applyImage(bmp, name, blob) {
+  state.imgBlob = blob || null;
   const off = document.createElement('canvas');
   off.width = bmp.width;
   off.height = bmp.height;
@@ -263,7 +331,7 @@ async function restoreSession() {
   if (!img || !img.blob || !saved || saved.v !== SAVE_VERSION) return false;
   try {
     const bmp = await createImageBitmap(img.blob);
-    applyImage(bmp, img.name || saved.fileName || 'restored image');
+    applyImage(bmp, img.name || saved.fileName || 'restored image', img.blob);
     applySavedState(saved);
     setMessage('restored previous session');
     refresh(true);
@@ -910,6 +978,7 @@ function wireEvents() {
 
   $('btn-open').addEventListener('click', () => $('file-input').click());
   $('file-input').addEventListener('change', e => loadImageFile(e.target.files[0]));
+  $('btn-save-state').addEventListener('click', saveStateFile);
   $('btn-detect').addEventListener('click', runDetect);
   $('btn-reset-grid').addEventListener('click', () => {
     if (!state.imgCanvas) return;

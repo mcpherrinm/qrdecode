@@ -82,6 +82,13 @@ picks up right where you left off. Loading a new image replaces the stored sessi
    image to highlight its codeword and character in the output. This is how you find
    *which* modules to try flipping to make the output make sense.
 
+**Save** (topbar) writes the whole session to a single `.qrdecode` file:
+the original image bytes plus the full decoder state — grid warp, version,
+EC/mask/threshold/quiet-zone settings, and every forced/ignored module. Opening
+that file — same **open** button, or drop it on the canvas — restores the
+session exactly, no auto-detection. Handy for archiving a decode or handing a
+stubborn symbol to someone else.
+
 The sidebar also shows what the format info actually reads (EC level, mask, and its
 hamming distance) and, for version ≥ 7 symbols, what the version info bits say —
 both can be overridden manually when those regions are damaged.
@@ -96,6 +103,7 @@ both can be overridden manually when those regions are damaged.
 | `js/decode.js` | matrix → codewords → per-block RS → bitstream parse (numeric/alnum/byte/kanji/ECI), with bit→module provenance kept throughout |
 | `js/homography.js` | grid ↔ image mapping: 4-corner projective, plus 3×3 biquadratic warp (Lagrange forward, Newton inverse) |
 | `js/detect.js` | adaptive binarization + 1:1:3:1:1 finder-pattern scan + corner/version estimation |
+| `js/statefile.js` | `.qrdecode` state-file codec: decoder state + image bytes in one binary container |
 | `js/app.js` | canvas UI, interactions, sidebar, output rendering and cross-highlighting |
 
 The decode pipeline is tested against the `qrcode` npm encoder across all versions
