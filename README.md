@@ -66,8 +66,10 @@ of this; the steps below are the detailed version.
    force-black → ignore → auto (right-click resets), or use the small dropdown that appears
    under a hovered dot to pick force ■ / force □ / ignore / auto directly (the auto
    row shows the detected value). Clicking through a warp diamond toggles the module
-   beneath it; dragging the diamond moves the grid. Forced modules are marked with
-   red squares, ignored ones with gray ×. The decode updates live, and corrected
+   beneath it; dragging the diamond moves the grid. Forced modules are boxed on a
+   grey backdrop — red when the forced value overrides the read one, purple when
+   it (redundantly) matches — ignored ones marked with gray ×. The decode updates
+   live, and corrected
    codewords report what changed. A legend at the bottom of the sidebar explains
    every marker and color. Spec-fixed modules (the square marks) are read-only:
    the decoder never reads them, so forcing them could only hide the alignment

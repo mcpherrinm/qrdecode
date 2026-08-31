@@ -711,11 +711,11 @@ function draw() {
     // laid out in grid space so they warp/rotate with the grid; data modules
     // stay round dots, so shape says spec-fixed vs data at a glance.
     const hKnown = (r * 0.75) / mpx; // half-side in grid units
-    const sq = (path, col, row) => {
-      const p0 = gridToScreen(col + 0.5 - hKnown, row + 0.5 - hKnown);
-      const p1 = gridToScreen(col + 0.5 + hKnown, row + 0.5 - hKnown);
-      const p2 = gridToScreen(col + 0.5 + hKnown, row + 0.5 + hKnown);
-      const p3 = gridToScreen(col + 0.5 - hKnown, row + 0.5 + hKnown);
+    const sq = (path, col, row, h) => {
+      const p0 = gridToScreen(col + 0.5 - h, row + 0.5 - h);
+      const p1 = gridToScreen(col + 0.5 + h, row + 0.5 - h);
+      const p2 = gridToScreen(col + 0.5 + h, row + 0.5 + h);
+      const p3 = gridToScreen(col + 0.5 - h, row + 0.5 + h);
       path.moveTo(p0.x, p0.y);
       path.lineTo(p1.x, p1.y);
       path.lineTo(p2.x, p2.y);
@@ -741,7 +741,11 @@ function draw() {
     };
     const black = new Path2D(), white = new Path2D();
     const badBlack = new Path2D(), badWhite = new Path2D();
-    const forced = [], ignored = [];
+    // Forced-module markers: grid-space squares around the dot — red when the
+    // forced value overrides the sampled one, purple when it matches it.
+    const hForce = (r * 1.9) / mpx;
+    const forcedDiff = new Path2D(), forcedSame = new Path2D();
+    const ignored = [];
     for (let row = 0; row < size; row++) {
       for (let col = 0; col < size; col++) {
         const i = row * size + col;
@@ -752,12 +756,18 @@ function draw() {
         // Ignored modules are known damage — no point tinting them as mismatches.
         const bad = ovr !== 2 && exp >= 0 && exp !== bit;
         const path = bad ? (bit ? badBlack : badWhite) : (bit ? black : white);
-        if (exp >= 0) sq(path, col, row);
+        if (exp >= 0) sq(path, col, row, hKnown);
         else ell(path, col, row, p);
         if (ovr === 2) ignored.push(p);
-        else if (ovr !== undefined) forced.push(p);
+        else if (ovr !== undefined) {
+          sq(ovr === state.sample.bits[i] ? forcedSame : forcedDiff, col, row, hForce);
+        }
       }
     }
+    // Forced-marker backdrops go under the dots.
+    ctx.fillStyle = 'rgba(128,128,128,0.35)';
+    ctx.fill(forcedDiff);
+    ctx.fill(forcedSame);
     ctx.lineWidth = 1;
     ctx.fillStyle = '#000';
     ctx.fill(black);
@@ -780,7 +790,7 @@ function draw() {
     if (state.sample.quiet) {
       const qDark = new Path2D(), qLight = new Path2D();
       for (const m of state.sample.quiet) {
-        sq(m.bit ? qDark : qLight, m.c, m.r);
+        sq(m.bit ? qDark : qLight, m.c, m.r, hKnown);
       }
       ctx.lineWidth = 1;
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
@@ -792,15 +802,12 @@ function draw() {
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       ctx.stroke(qDark);
     }
-    // Forced modules: red square marker.
-    if (forced.length) {
-      ctx.strokeStyle = '#d92b2b';
-      ctx.lineWidth = 1.5;
-      const s = r * 1.9;
-      ctx.beginPath();
-      for (const p of forced) ctx.rect(p.x - s, p.y - s, s * 2, s * 2);
-      ctx.stroke();
-    }
+    // Forced-marker borders go over the dots.
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#d92b2b';
+    ctx.stroke(forcedDiff);
+    ctx.strokeStyle = '#822bd9';
+    ctx.stroke(forcedSame);
     // Ignored modules: gray × marker (codeword becomes an RS erasure).
     if (ignored.length) {
       const s = r * 1.5;
@@ -1595,7 +1602,7 @@ function renderDotMenu() {
   const rows = [
     { act: '0', label: 'force □', active: ovr === 0 },
     { act: '1', label: 'force ■', active: ovr === 1 },
-    { act: 'x', label: 'ignore (damaged)', active: ovr === 2 },
+    { act: 'x', label: 'ignore (damaged)', icon: '×', active: ovr === 2 },
     { act: 'auto', label: `auto (${sampled ? '■' : '□'})`, active: ovr === undefined },
   ];
   el.textContent = '';
@@ -1603,7 +1610,14 @@ function renderDotMenu() {
     const d = document.createElement('div');
     d.className = 'dm-row' + (row.active ? ' active' : '');
     d.dataset.act = row.act;
-    d.textContent = `${row.active ? '●' : '○'} ${row.label}`;
+    d.textContent = `${row.active ? '●' : '○'} `;
+    if (row.icon) {
+      const ic = document.createElement('span');
+      ic.className = 'dm-x';
+      ic.textContent = `${row.icon} `;
+      d.appendChild(ic);
+    }
+    d.appendChild(document.createTextNode(row.label));
     el.appendChild(d);
   }
 }

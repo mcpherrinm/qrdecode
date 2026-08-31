@@ -119,6 +119,8 @@ main {
 }
 .dm-row:hover { background: var(--fg); color: var(--bg); }
 .dm-row.active { font-weight: 700; }
+/* Gray ×, matching the legend and the canvas ignore marker. */
+.dm-x { color: #767676; font-weight: 700; }
 #handle-tip {
   border-color: #2979ff;
   color: #2979ff;
@@ -249,7 +251,9 @@ main {
 /* Mismatch tints only occur on spec-fixed modules, which draw square. */
 .lg-dot-badb { background: #a01515; box-shadow: 0 0 0 1px #fff, 0 0 0 2px #a01515; }
 .lg-dot-badw { background: #ffc4c4; border: 1px solid #d92b2b; }
-.lg-forced { border: 1.5px solid var(--red); }
+.lg-forced, .lg-forced-same { background: rgba(128, 128, 128, 0.35); }
+.lg-forced { border: 2px solid var(--red); }
+.lg-forced-same { border: 2px solid #822bd9; }
 .lg-ignore { color: #666; font-weight: 700; line-height: 11px; text-align: center; }
 .lg-diamond { border: 2px solid #2979ff; transform: rotate(45deg) scale(0.85); }
 .lg-rotate { border: 2px solid #2979ff; border-radius: 50%; border-top-color: transparent; transform: rotate(-45deg); }
