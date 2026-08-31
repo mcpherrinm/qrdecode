@@ -42,10 +42,10 @@ of this; the steps below are the detailed version.
    dark are tinted red and counted in the sidebar: another alignment cue, and a
    quick check for text or artwork encroaching on the symbol.
 
-   The grid is a warpable biquadratic surface with nine handles: corner squares for
-   perspective, and edge-midpoint/center diamonds that bend it over **curved
-   surfaces** (a label on a bottle, say) — drag any handle and the grid point under
-   it follows exactly. A circular **rotate grabber** floats above the top edge (drag
+   The grid is a warpable biquadratic surface with nine diamond handles: corners
+   for perspective (hover names which corner), and edge-midpoint/center ones that
+   bend it over **curved surfaces** (a label on a bottle, say) — drag any handle
+   and the grid point under it follows exactly. A circular **rotate grabber** floats above the top edge (drag
    to spin the grid around its center), and **scale handles** — outward-pointing
    arrows outside each corner — resize the grid without warping it: width and
    height scale independently, anchored at the opposite corner. Dragging a scale

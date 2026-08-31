@@ -465,7 +465,7 @@ function initWarpPts() {
 function handleList() {
   if (!state.corners) return [];
   if (!state.warpPts) initWarpPts();
-  const labels = ['TL', 'TR', 'BR', 'BL'];
+  const labels = ['top left', 'top right', 'bottom right', 'bottom left'];
   const out = [];
   for (let i = 0; i < 3; i++) {
     for (let j = 0; j < 3; j++) {
@@ -802,7 +802,8 @@ function draw() {
     ctx.restore();
   }
 
-  // Control handles: bright blue — squares for corners, diamonds for warp points.
+  // Control handles: bright blue unfilled diamonds (corners drag perspective,
+  // the rest bend the grid); unfilled so the module dot underneath stays visible.
   const HANDLE_BLUE = '#2979ff', HANDLE_BLUE_DARK = '#0d3fb8';
   const handles = handleList();
   for (let i = 0; i < handles.length; i++) {
@@ -810,34 +811,19 @@ function draw() {
     const p = imgToScreen(h.pt);
     const sel = state.selHandle === i;
     const blue = sel ? HANDLE_BLUE_DARK : HANDLE_BLUE;
-    if (h.corner) {
-      ctx.fillStyle = blue;
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2;
-      ctx.fillRect(p.x - 6, p.y - 6, 12, 12);
-      ctx.strokeRect(p.x - 6, p.y - 6, 12, 12);
-      ctx.strokeStyle = blue;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(p.x - 7.5, p.y - 7.5, 15, 15);
-      ctx.fillStyle = HANDLE_BLUE_DARK;
-      ctx.font = 'bold 10px ui-monospace, monospace';
-      ctx.fillText(h.label, p.x + 10, p.y - 10);
-    } else {
-      // Unfilled diamond so the module dot underneath stays visible.
-      const s = 9;
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y - s);
-      ctx.lineTo(p.x + s, p.y);
-      ctx.lineTo(p.x, p.y + s);
-      ctx.lineTo(p.x - s, p.y);
-      ctx.closePath();
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 4;
-      ctx.stroke();
-      ctx.strokeStyle = blue;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+    const s = 9;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - s);
+    ctx.lineTo(p.x + s, p.y);
+    ctx.lineTo(p.x, p.y + s);
+    ctx.lineTo(p.x - s, p.y);
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = blue;
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 
   // Rotate grabber: one circular arrow floating above the top edge center.
@@ -1405,12 +1391,12 @@ function onPointerMove(e) {
   const hi = hitHandle(p.x, p.y);
   const h = hi >= 0 ? handleList()[hi] : null;
   if (h && h.corner) {
-    hideHandleTip();
+    showHandleTip(imgToScreen(h.pt), `${h.label} — drag to move`);
     hideDotMenu();
     setHover(null);
     return;
   }
-  // A diamond handle shows its tip AND the dot menu for the module beneath it.
+  // A non-corner diamond shows its tip AND the dot menu for the module beneath it.
   if (h) showHandleTip(imgToScreen(h.pt), 'drag to move'); else hideHandleTip();
   if (m && !isLockedModule(m.i) && state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0);
   else scheduleMenuHide();

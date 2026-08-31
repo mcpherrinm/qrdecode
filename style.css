@@ -238,7 +238,6 @@ main {
 .lg-dot-badw { background: #ffc4c4; border: 1px solid #d92b2b; }
 .lg-forced { border: 1.5px solid var(--red); }
 .lg-ignore { color: #666; font-weight: 700; line-height: 11px; text-align: center; }
-.lg-corner { background: #2979ff; border: 2px solid #fff; box-shadow: 0 0 0 1px #2979ff; }
 .lg-diamond { border: 2px solid #2979ff; transform: rotate(45deg) scale(0.85); }
 .lg-rotate { border: 2px solid #2979ff; border-radius: 50%; border-top-color: transparent; transform: rotate(-45deg); }
 .lg-hl { background: rgba(26, 150, 60, 0.4); border: 2px solid #1a963c; }
