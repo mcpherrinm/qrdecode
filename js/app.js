@@ -191,6 +191,34 @@ function fitView() {
   state.view.oy = (ch - state.imgH * s) / 2;
 }
 
+// Zoom/pan the view so the symbol fills the viewport, with a margin a bit
+// wider than the 4-module quiet zone (whether or not it's displayed). The
+// extended boundary is sampled through the mapper so warped grids fit too.
+function fitGrid() {
+  if (!state.corners) return;
+  updateH();
+  const size = gridSize();
+  const lo = -5, hi = size + 5;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const n = 24;
+  for (let k = 0; k <= n; k++) {
+    const t = lo + (hi - lo) * k / n;
+    for (const p of [state.mapper.map(t, lo), state.mapper.map(t, hi),
+                     state.mapper.map(lo, t), state.mapper.map(hi, t)]) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+  }
+  const cw = canvas.width / dpr, ch = canvas.height / dpr;
+  const s = Math.min(cw / (maxX - minX), ch / (maxY - minY));
+  if (!isFinite(s) || s <= 0) return;
+  state.view.scale = s;
+  state.view.ox = (cw - (maxX - minX) * s) / 2 - minX * s;
+  state.view.oy = (ch - (maxY - minY) * s) / 2 - minY * s;
+  draw();
+  scheduleSave();
+}
+
 function runDetect() {
   if (!state.imgCanvas) return;
   if (state.corners) pushHistory(); // re-detect over an existing grid is undoable
@@ -1079,6 +1107,7 @@ function wireEvents() {
   });
 
   // Mobile: maximize canvas button
+  $('btn-fit').addEventListener('click', fitGrid);
   $('btn-maximize').addEventListener('click', () => {
     const wrap = $('canvas-wrap');
     const maximized = wrap.classList.toggle('maximized');
