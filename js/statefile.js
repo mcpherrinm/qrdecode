@@ -1,16 +1,16 @@
 // Save/load the whole session as one file: decoder state plus the original
 // image bytes. Layout: "QRDS" magic, fmt u8, version u8, ec u8 (0 = auto,
 // 1-4 = L/M/Q/H), mask u8 (0 = auto, 1-8), thrOffset i8, quietZone u8,
-// imgW u32 LE, imgH u32 LE, warpPts 18 x f32 LE (row-major x,y), a 2-bit-per-
-// module override plane (0 = auto, 1 = force white, 2 = force black,
-// 3 = ignore), then u16 name length + UTF-8 name, u8 MIME length + ASCII MIME,
-// u32 image length + image bytes. No compression: the image bytes dominate
-// and are already compressed.
+// flags u8 (bit 0 = inverted colours; fmt >= 2 only), imgW u32 LE, imgH u32
+// LE, warpPts 18 x f32 LE (row-major x,y), a 2-bit-per-module override plane
+// (0 = auto, 1 = force white, 2 = force black, 3 = ignore), then u16 name
+// length + UTF-8 name, u8 MIME length + ASCII MIME, u32 image length + image
+// bytes. No compression: the image bytes dominate and are already compressed.
 'use strict';
 
 const STATEFILE_MAGIC = [0x51, 0x52, 0x44, 0x53]; // "QRDS"
-const STATEFILE_FMT = 1;
-const STATEFILE_HEAD = 18 + 72; // magic+fmt+fixed fields + warp points
+const STATEFILE_FMT = 2; // v2 added the flags byte; v1 files still load
+const STATEFILE_HEAD = 19 + 72; // magic+fmt+fixed fields + warp points
 
 // Cheap header check, for routing a file whose name doesn't end in .qrdecode.
 function stateFileSniff(bytes) {
@@ -33,9 +33,10 @@ function stateFileEncode(s, imgBytes, imgName, imgMime) {
   dv.setUint8(7, s.maskOverride == null ? 0 : s.maskOverride + 1);
   dv.setInt8(8, s.thrOffset);
   dv.setUint8(9, s.quietZone);
-  dv.setUint32(10, s.imgW, true);
-  dv.setUint32(14, s.imgH, true);
-  let off = 18;
+  dv.setUint8(10, s.invert ? 1 : 0);
+  dv.setUint32(11, s.imgW, true);
+  dv.setUint32(15, s.imgH, true);
+  let off = 19;
   for (let i = 0; i < 3; i++) {
     for (let j = 0; j < 3; j++) {
       dv.setFloat32(off, s.warpPts[i][j].x, true);
@@ -60,9 +61,10 @@ function stateFileEncode(s, imgBytes, imgName, imgMime) {
 
 function stateFileDecode(bytes) {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.length < STATEFILE_HEAD ||
+  const fmt = bytes.length >= 5 ? dv.getUint8(4) : 0;
+  if (bytes.length < 18 + 72 ||
       !STATEFILE_MAGIC.every((b, i) => bytes[i] === b) ||
-      dv.getUint8(4) !== STATEFILE_FMT) {
+      fmt < 1 || fmt > STATEFILE_FMT) {
     throw new Error('not a qrdecode state file');
   }
   const version = dv.getUint8(5);
@@ -70,7 +72,9 @@ function stateFileDecode(bytes) {
   const size = 17 + 4 * version;
   const planeLen = Math.ceil(size * size / 4);
   const need = at => { if (bytes.length < at) throw new Error('truncated state file'); };
-  need(STATEFILE_HEAD + planeLen + 2);
+  const flags = fmt >= 2 ? dv.getUint8(10) : 0; // fmt 1 predates the flags byte
+  const base = fmt >= 2 ? 11 : 10;
+  need(base + 8 + 72 + planeLen + 2);
   const ecB = dv.getUint8(6), maskB = dv.getUint8(7);
   const s = {
     version,
@@ -78,12 +82,13 @@ function stateFileDecode(bytes) {
     maskOverride: maskB ? maskB - 1 : null,
     thrOffset: dv.getInt8(8),
     quietZone: dv.getUint8(9),
-    imgW: dv.getUint32(10, true),
-    imgH: dv.getUint32(14, true),
+    invert: !!(flags & 1),
+    imgW: dv.getUint32(base, true),
+    imgH: dv.getUint32(base + 4, true),
     warpPts: [],
     overrides: [],
   };
-  let off = 18;
+  let off = base + 8;
   for (let i = 0; i < 3; i++) {
     const row = [];
     for (let j = 0; j < 3; j++) {

@@ -27,7 +27,8 @@ of this; the steps below are the detailed version.
    projected over the symbol with a sample dot at each module center (black/white =
    what the sampler reads). Drag the four corner handles to fix alignment
    (perspective is handled), pick the version, and adjust the sampling threshold.
-   Arrow keys nudge the selected handle; hold Shift for 0.1 px steps.
+   An **invert** toggle reads colour-inverted (light-on-dark) symbols. Arrow keys
+   nudge the selected handle; hold Shift for 0.1 px steps.
 
    Modules whose value is fixed by the spec — finder rings, separators, timing,
    alignment patterns, the dark module, plus format/version info under the currently

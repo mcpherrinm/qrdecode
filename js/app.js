@@ -16,6 +16,7 @@ const state = {
   ecOverride: null,    // null = auto
   maskOverride: null,  // null = auto
   thrOffset: 0,
+  invert: false,       // inverted-colour (light-on-dark) symbol: flip the sampled bits
   quietZone: 0,        // modules of quiet zone to show around the symbol (0-4), display-only
   overrides: new Map(),// moduleIdx -> 0|1 (forced bit) | 2 (ignored: RS erasure)
   view: { scale: 1, ox: 20, oy: 20 },
@@ -57,6 +58,7 @@ function syncControls() {
   $('rng-threshold').value = state.thrOffset;
   $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
   $('sel-quiet').value = String(state.quietZone);
+  $('chk-invert').checked = state.invert;
 }
 
 function setupCanvasSize() {
@@ -126,6 +128,7 @@ async function saveStateFile() {
     ecOverride: state.ecOverride,
     maskOverride: state.maskOverride,
     thrOffset: state.thrOffset,
+    invert: state.invert,
     quietZone: state.quietZone,
     warpPts: state.warpPts,
     overrides: state.overrides,
@@ -326,6 +329,7 @@ function saveState() {
     ecOverride: state.ecOverride,
     maskOverride: state.maskOverride,
     thrOffset: state.thrOffset,
+    invert: state.invert,
     quietZone: state.quietZone,
     overrides: [...state.overrides],
     view: { ...state.view },
@@ -343,6 +347,7 @@ function applySavedState(saved) {
   state.ecOverride = saved.ecOverride;
   state.maskOverride = saved.maskOverride;
   state.thrOffset = saved.thrOffset;
+  state.invert = !!saved.invert;
   state.quietZone = saved.quietZone || 0;
   state.overrides = new Map(saved.overrides);
   // Older sessions/state files could force spec-fixed modules; drop those.
@@ -394,6 +399,7 @@ function historySnapshot() {
     ecOverride: state.ecOverride,
     maskOverride: state.maskOverride,
     thrOffset: state.thrOffset,
+    invert: state.invert,
     overrides: [...state.overrides],
   };
 }
@@ -410,6 +416,7 @@ function applyHistorySnapshot(s) {
   state.ecOverride = s.ecOverride;
   state.maskOverride = s.maskOverride;
   state.thrOffset = s.thrOffset;
+  state.invert = !!s.invert;
   state.overrides = new Map(s.overrides);
   state.selHandle = -1;
   syncControls();
@@ -529,8 +536,10 @@ function resample() {
     }
   }
   const threshold = otsu(means) + state.thrOffset;
+  // Inverted (light-on-dark) symbols: a dark sample reads as a 0 module.
+  const dark = state.invert ? 0 : 1;
   const bits = new Uint8Array(size * size);
-  for (let i = 0; i < bits.length; i++) bits[i] = means[i] <= threshold ? 1 : 0;
+  for (let i = 0; i < bits.length; i++) bits[i] = means[i] <= threshold ? dark : 1 - dark;
 
   // Quiet-zone ring around the symbol, display-only (never fed to the decoder).
   // Same threshold as the interior — otsu stays interior-only so a large white
@@ -549,7 +558,7 @@ function resample() {
           const y = Math.min(h - 1, Math.max(0, Math.round(p.y)));
           sum += gray[y * w + x];
         }
-        quiet.push({ r, c, bit: sum / offsets.length <= threshold ? 1 : 0 });
+        quiet.push({ r, c, bit: sum / offsets.length <= threshold ? dark : 1 - dark });
       }
     }
   }
@@ -1075,6 +1084,11 @@ function wireEvents() {
   // Display-only (doesn't affect the decode), so like pan/zoom it skips history.
   $('sel-quiet').addEventListener('change', e => {
     state.quietZone = +e.target.value;
+    refresh(true);
+  });
+  $('chk-invert').addEventListener('change', e => {
+    pushHistory();
+    state.invert = e.target.checked;
     refresh(true);
   });
 

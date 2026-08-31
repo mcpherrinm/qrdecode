@@ -64,6 +64,11 @@
         <span id="thr-label">+0</span>
       </div>
       <div class="row">
+        <label for="chk-invert">invert</label>
+        <input type="checkbox" id="chk-invert" autocomplete="off">
+        <span class="dim">light-on-dark code</span>
+      </div>
+      <div class="row">
         <label for="sel-quiet">quiet zone</label>
         <select id="sel-quiet" autocomplete="off">
           <option value="0">off</option>
@@ -162,8 +167,9 @@
     They turn red where the picture disagrees: one or two
     may be real damage, but many red dots mean the grid is sitting wrong —
     adjust until they go away. The threshold slider sets how dark counts as
-    black, and the quiet zone option also checks the blank border every code
-    must have around it.</p>
+    black, invert flips the reading for codes printed light-on-dark, and the
+    quiet zone option also checks the blank border every code must have
+    around it.</p>
 
     <p><b>4 · read the result</b><br>
     The decoded text appears below the picture; red underlined letters are
