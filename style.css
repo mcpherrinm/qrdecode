@@ -19,6 +19,19 @@ html, body {
 
 body { display: flex; flex-direction: column; overflow: hidden; }
 
+/* Touch: a handle drag must never start a text selection — once the browser
+   owns a selection it swallows the pointer events mid-gesture. Selection is
+   re-enabled below only where copying matters. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+#output, .help-body {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .dim { color: var(--dim); }
 .err { color: var(--red); }
 .ok { color: var(--fg); }
