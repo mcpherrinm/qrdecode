@@ -59,6 +59,17 @@ function syncControls() {
   $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
   $('sel-quiet').value = String(state.quietZone);
   $('chk-invert').checked = state.invert;
+  syncLegend();
+}
+
+// The legend's sampled/mismatch rows mirror the canvas markers, so they flip
+// with invert too — swatch colours via body.inverted, wording to match.
+function syncLegend() {
+  document.body.classList.toggle('inverted', !!state.invert);
+  $('lg-t-b1').textContent = `sampled ${state.invert ? 'white' : 'black'} module (1)`;
+  $('lg-t-b0').textContent = `sampled ${state.invert ? 'black' : 'white'} module (0)`;
+  $('lg-t-bad1').textContent = `reads ${bitGlyph(1)} where known pattern is ${bitGlyph(0)}`;
+  $('lg-t-bad0').textContent = `reads ${bitGlyph(0)} where known pattern is ${bitGlyph(1)}`;
 }
 
 function setupCanvasSize() {
@@ -753,6 +764,15 @@ function draw() {
     };
     const black = new Path2D(), white = new Path2D();
     const badBlack = new Path2D(), badWhite = new Path2D();
+    // Bits keep their logical meaning (1 = QR-dark) under invert, but on a
+    // light-on-dark photo that module is printed light — paint every marker
+    // in the image's actual colours so they overlay what's on screen.
+    const inv = state.invert;
+    const INK = inv ? '#fff' : '#000', PAPER = inv ? '#000' : '#fff';
+    const INK_EDGE = inv ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.85)';
+    const PAPER_EDGE = inv ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
+    const BAD_DARK = '#a01515', BAD_DARK_EDGE = 'rgba(255,255,255,0.85)';
+    const BAD_LIGHT = '#ffc4c4', BAD_LIGHT_EDGE = '#d92b2b';
     // Forced-module markers: grid-space squares around the dot — red when the
     // forced value overrides the sampled one, purple when it matches it.
     const hForce = (r * 1.9) / mpx;
@@ -781,21 +801,21 @@ function draw() {
     ctx.fill(forcedDiff);
     ctx.fill(forcedSame);
     ctx.lineWidth = 1;
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = INK;
     ctx.fill(black);
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.strokeStyle = INK_EDGE;
     ctx.stroke(black);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = PAPER;
     ctx.fill(white);
-    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeStyle = PAPER_EDGE;
     ctx.stroke(white);
-    ctx.fillStyle = '#a01515';
+    ctx.fillStyle = inv ? BAD_LIGHT : BAD_DARK;
     ctx.fill(badBlack);
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.strokeStyle = inv ? BAD_LIGHT_EDGE : BAD_DARK_EDGE;
     ctx.stroke(badBlack);
-    ctx.fillStyle = '#ffc4c4';
+    ctx.fillStyle = inv ? BAD_DARK : BAD_LIGHT;
     ctx.fill(badWhite);
-    ctx.strokeStyle = '#d92b2b';
+    ctx.strokeStyle = inv ? BAD_DARK_EDGE : BAD_LIGHT_EDGE;
     ctx.stroke(badWhite);
     // Quiet-zone dots: the spec requires all white, so dark reads get the
     // mismatch tint — anything red out there means encroachment or misalignment.
@@ -805,13 +825,13 @@ function draw() {
         sq(m.bit ? qDark : qLight, m.c, m.r, hKnown);
       }
       ctx.lineWidth = 1;
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillStyle = inv ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.65)';
       ctx.fill(qLight);
-      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.strokeStyle = inv ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)';
       ctx.stroke(qLight);
-      ctx.fillStyle = '#a01515';
+      ctx.fillStyle = inv ? BAD_LIGHT : BAD_DARK;
       ctx.fill(qDark);
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.strokeStyle = inv ? BAD_LIGHT_EDGE : BAD_DARK_EDGE;
       ctx.stroke(qDark);
     }
     // Forced-marker borders go over the dots.
@@ -1102,6 +1122,7 @@ function wireEvents() {
   $('chk-invert').addEventListener('change', e => {
     pushHistory();
     state.invert = e.target.checked;
+    syncLegend();
     refresh(true);
   });
 
@@ -1611,16 +1632,22 @@ function showDotMenu(m, minGap = 0) {
   el.hidden = false;
 }
 
+// Glyph for a logical bit as it appears on screen: bit 1 is QR-dark, but with
+// invert on it's printed light — the tooltip should match what the eye sees.
+function bitGlyph(b) {
+  return (b === 1) !== !!state.invert ? '■' : '□';
+}
+
 function renderDotMenu() {
   if (menuModule == null) return;
   const el = $('dot-menu');
   const ovr = state.overrides.get(menuModule);
   const sampled = state.sample ? state.sample.bits[menuModule] : 0;
   const rows = [
-    { label: 'force □', active: ovr === 0 },
-    { label: 'force ■', active: ovr === 1 },
+    { label: `force ${bitGlyph(0)}`, active: ovr === 0 },
+    { label: `force ${bitGlyph(1)}`, active: ovr === 1 },
     { label: 'ignore damaged', tail: '×', active: ovr === 2 },
-    { label: `auto (${sampled ? '■' : '□'})`, active: ovr === undefined },
+    { label: `auto (${bitGlyph(sampled)})`, active: ovr === undefined },
   ];
   el.textContent = '';
   for (const row of rows) {
@@ -1749,10 +1776,10 @@ function updateStatus(m) {
     const i = m.i;
     const forced = state.overrides.get(i);
     const bit = getEffectiveBit(m.r, m.c);
-    parts.push(`module (${m.r},${m.c}) lum ${state.sample.means[i].toFixed(0)} → ${bit ? '■' : '□'}` +
+    parts.push(`module (${m.r},${m.c}) lum ${state.sample.means[i].toFixed(0)} → ${bitGlyph(bit)}` +
       (forced === 2 ? ' ignored' : forced !== undefined ? ' forced' : ''));
     const exp = expectedBit(i, getLayout(state.version).expected, dynamicExpected());
-    if (exp >= 0 && exp !== bit && forced !== 2) parts.push(`expected ${exp ? '■' : '□'}`);
+    if (exp >= 0 && exp !== bit && forced !== 2) parts.push(`expected ${bitGlyph(exp)}`);
     if (state.result) {
       const g = state.result.moduleToCw[i];
       if (g >= 0) {

@@ -257,6 +257,12 @@ main {
 /* Mismatch tints only occur on spec-fixed modules, which draw square. */
 .lg-dot-badb { background: #a01515; box-shadow: 0 0 0 1px #fff, 0 0 0 2px #a01515; }
 .lg-dot-badw { background: #ffc4c4; border: 1px solid #d92b2b; }
+/* With invert on, the canvas markers draw in the image's colours; the legend
+   swatches follow suit (class names keep their normal-mode meaning). */
+body.inverted .lg-dot-black { background: #fff; box-shadow: none; border: 1px solid #000; }
+body.inverted .lg-dot-white { background: #000; border: 0; box-shadow: 0 0 0 1px #767676; }
+body.inverted .lg-dot-badb { background: #ffc4c4; box-shadow: none; border: 1px solid #d92b2b; }
+body.inverted .lg-dot-badw { background: #a01515; border: 0; box-shadow: 0 0 0 1px #fff, 0 0 0 2px #a01515; }
 .lg-forced, .lg-forced-same { background: rgba(128, 128, 128, 0.35); }
 .lg-forced { border: 2px solid var(--red); }
 .lg-forced-same { border: 2px solid #822bd9; }
