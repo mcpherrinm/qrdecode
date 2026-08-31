@@ -31,7 +31,9 @@ of this; the steps below are the detailed version.
 
    Modules whose value is fixed by the spec — finder rings, separators, timing,
    alignment patterns, the dark module, plus format/version info under the currently
-   assumed EC+mask — are **tinted red when they disagree** with expectation, and the
+   assumed EC+mask — draw as small squares, data modules as round dots; both are
+   laid out in grid space, so they shear and stretch with the warped grid.
+   Spec-fixed modules are **tinted red when they disagree** with expectation, and the
    sidebar counts the mismatches, so you can see alignment quality at a glance.
 
    A **quiet zone** selector shows 0–4 modules of the spec-required white border
@@ -60,14 +62,16 @@ of this; the steps below are the detailed version.
    Reed-Solomon runs per block, so
    an uncorrectable block doesn't stop the rest from decoding (partial decoding).
    Characters that depend on a failed block are flagged red as suspect.
-4. **Fix bits by hand** — click any module to cycle auto → force-white → force-black
-   → ignore → auto (right-click resets), or use the small dropdown that appears
+4. **Fix bits by hand** — click any data module to cycle auto → force-white →
+   force-black → ignore → auto (right-click resets), or use the small dropdown that appears
    under a hovered dot to pick force ■ / force □ / ignore / auto directly (the auto
    row shows the detected value). Clicking through a warp diamond toggles the module
    beneath it; dragging the diamond moves the grid. Forced modules are marked with
    red squares, ignored ones with gray ×. The decode updates live, and corrected
    codewords report what changed. A legend at the bottom of the sidebar explains
-   every marker and color.
+   every marker and color. Spec-fixed modules (the square marks) are read-only:
+   the decoder never reads them, so forcing them could only hide the alignment
+   signal.
 
    **Ignore = erasure.** When part of the symbol is known to be unreadable — a logo
    printed over the middle, a hole, a sticker — mark it ignored (shift-drag draws a

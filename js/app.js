@@ -314,6 +314,10 @@ function applySavedState(saved) {
   state.thrOffset = saved.thrOffset;
   state.quietZone = saved.quietZone || 0;
   state.overrides = new Map(saved.overrides);
+  // Older sessions/state files could force spec-fixed modules; drop those.
+  for (const i of [...state.overrides.keys()]) {
+    if (isLockedModule(i)) state.overrides.delete(i);
+  }
   if (saved.view) state.view = { ...saved.view };
   state.selHandle = -1;
   syncControls();
@@ -533,6 +537,13 @@ function isIgnoredModule(r, c) {
   return state.overrides.get(r * gridSize() + c) === 2;
 }
 
+// Spec-fixed modules (function patterns, format/version info) are read-only:
+// the decoder never reads function patterns, and forcing any of them would
+// only mask the alignment-quality signal.
+function isLockedModule(i) {
+  return !!getLayout(state.version).isF[i];
+}
+
 function decode() {
   if (!state.sample) { state.result = null; return; }
   state.result = decodeMatrix(getEffectiveBit, state.version, {
@@ -668,7 +679,38 @@ function draw() {
     const layout = getLayout(state.version);
     const dyn = dynamicExpected();
     const r = Math.min(7, Math.max(1.4, mpx * 0.22));
-    const rKnown = r * 0.75; // known-value modules (and quiet zone): smaller dot
+    // Known-value modules (and quiet zone) draw as slightly smaller squares,
+    // laid out in grid space so they warp/rotate with the grid; data modules
+    // stay round dots, so shape says spec-fixed vs data at a glance.
+    const hKnown = (r * 0.75) / mpx; // half-side in grid units
+    const sq = (path, col, row) => {
+      const p0 = gridToScreen(col + 0.5 - hKnown, row + 0.5 - hKnown);
+      const p1 = gridToScreen(col + 0.5 + hKnown, row + 0.5 - hKnown);
+      const p2 = gridToScreen(col + 0.5 + hKnown, row + 0.5 + hKnown);
+      const p3 = gridToScreen(col + 0.5 - hKnown, row + 0.5 + hKnown);
+      path.moveTo(p0.x, p0.y);
+      path.lineTo(p1.x, p1.y);
+      path.lineTo(p2.x, p2.y);
+      path.lineTo(p3.x, p3.y);
+      path.closePath();
+    };
+    // Data dots are circles in grid space too: the local Jacobian (sampled
+    // with two offset points) turns each into the screen ellipse a warped or
+    // perspective grid implies. Closed-form 2x2 SVD gives axes + rotation.
+    const hData = r / mpx;
+    const ell = (path, col, row, p) => {
+      const pu = gridToScreen(col + 0.5 + hData, row + 0.5);
+      const pv = gridToScreen(col + 0.5, row + 0.5 + hData);
+      const ma = pu.x - p.x, mc = pu.y - p.y; // image of grid +x
+      const mb = pv.x - p.x, md = pv.y - p.y; // image of grid +y
+      const E = (ma + md) / 2, F = (ma - md) / 2;
+      const G = (mc + mb) / 2, H = (mc - mb) / 2;
+      const Q = Math.hypot(E, H), R = Math.hypot(F, G);
+      const rx = Q + R, ry = Math.abs(Q - R);
+      const rot = (Math.atan2(H, E) + Math.atan2(G, F)) / 2;
+      path.moveTo(p.x + rx * Math.cos(rot), p.y + rx * Math.sin(rot));
+      path.ellipse(p.x, p.y, rx, ry, rot, 0, Math.PI * 2);
+    };
     const black = new Path2D(), white = new Path2D();
     const badBlack = new Path2D(), badWhite = new Path2D();
     const forced = [], ignored = [];
@@ -682,9 +724,8 @@ function draw() {
         // Ignored modules are known damage — no point tinting them as mismatches.
         const bad = ovr !== 2 && exp >= 0 && exp !== bit;
         const path = bad ? (bit ? badBlack : badWhite) : (bit ? black : white);
-        const rr = exp >= 0 ? rKnown : r;
-        path.moveTo(p.x + rr, p.y);
-        path.arc(p.x, p.y, rr, 0, Math.PI * 2);
+        if (exp >= 0) sq(path, col, row);
+        else ell(path, col, row, p);
         if (ovr === 2) ignored.push(p);
         else if (ovr !== undefined) forced.push(p);
       }
@@ -711,10 +752,7 @@ function draw() {
     if (state.sample.quiet) {
       const qDark = new Path2D(), qLight = new Path2D();
       for (const m of state.sample.quiet) {
-        const p = gridToScreen(m.c + 0.5, m.r + 0.5);
-        const path = m.bit ? qDark : qLight;
-        path.moveTo(p.x + rKnown, p.y);
-        path.arc(p.x, p.y, rKnown, 0, Math.PI * 2);
+        sq(m.bit ? qDark : qLight, m.c, m.r);
       }
       ctx.lineWidth = 1;
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
@@ -1374,7 +1412,7 @@ function onPointerMove(e) {
   }
   // A diamond handle shows its tip AND the dot menu for the module beneath it.
   if (h) showHandleTip(imgToScreen(h.pt), 'drag to move'); else hideHandleTip();
-  if (m && state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0);
+  if (m && !isLockedModule(m.i) && state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0);
   else scheduleMenuHide();
   if (m && state.result) {
     const g = state.result.moduleToCw[m.i];
@@ -1408,7 +1446,7 @@ function onPointerUp(e) {
     const h = wasDrag.mode === 'handle' ? handleList()[wasDrag.idx] : null;
     if (h && h.corner) { draw(); return; }
     const m = hitModule(p.x, p.y);
-    if (m) {
+    if (m && !isLockedModule(m.i)) {
       cycleOverride(m.i);
       refresh(false);
       if (state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0); // keep menu current
@@ -1479,10 +1517,13 @@ function applyMarquee(a, b) {
   const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
   const size = gridSize();
   const hit = [];
+  const isF = getLayout(state.version).isF;
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
+      const i = r * size + c;
+      if (isF[i]) continue; // spec-fixed modules stay untouched
       const p = gridToScreen(c + 0.5, r + 0.5);
-      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) hit.push(r * size + c);
+      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) hit.push(i);
     }
   }
   if (!hit.length) { draw(); return; }
@@ -1578,6 +1619,7 @@ function hideHandleTip() {
 
 // Cycle in menu order, top to bottom: force light -> force dark -> ignore -> auto.
 function cycleOverride(i) {
+  if (isLockedModule(i)) return;
   pushHistory();
   const cur = state.overrides.get(i);
   if (cur === undefined) state.overrides.set(i, 0);

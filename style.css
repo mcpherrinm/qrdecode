@@ -233,8 +233,9 @@ main {
 }
 .lg-dot-black { border-radius: 50%; background: #000; box-shadow: 0 0 0 1px #767676; }
 .lg-dot-white { border-radius: 50%; background: #fff; border: 1px solid #000; }
-.lg-dot-badb { border-radius: 50%; background: #a01515; box-shadow: 0 0 0 1px #fff, 0 0 0 2px #a01515; }
-.lg-dot-badw { border-radius: 50%; background: #ffc4c4; border: 1px solid #d92b2b; }
+/* Mismatch tints only occur on spec-fixed modules, which draw square. */
+.lg-dot-badb { background: #a01515; box-shadow: 0 0 0 1px #fff, 0 0 0 2px #a01515; }
+.lg-dot-badw { background: #ffc4c4; border: 1px solid #d92b2b; }
 .lg-forced { border: 1.5px solid var(--red); }
 .lg-ignore { color: #666; font-weight: 700; line-height: 11px; text-align: center; }
 .lg-corner { background: #2979ff; border: 2px solid #fff; box-shadow: 0 0 0 1px #2979ff; }
