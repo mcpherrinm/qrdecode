@@ -25,7 +25,13 @@ of this; the steps below are the detailed version.
 1. **Load an image** — open, drag-drop, or paste from the clipboard.
 2. **Align the grid** — finder patterns are auto-detected when possible; a grid is
    projected over the symbol with a sample dot at each module center (black/white =
-   what the sampler reads). Drag the four corner handles to fix alignment
+   what the sampler reads). Detection copes with rotated and perspective-distorted
+   photos (the bottom-right alignment pattern anchors the perspective fit),
+   colour-inverted symbols (the invert toggle is switched on automatically),
+   washed-out photos, and even a damaged or unreadable finder — two good finders
+   plus the timing pattern are enough to place the grid. On version ≥ 7 symbols
+   the version is read from the version-information bits rather than guessed
+   from module size. Drag the four corner handles to fix alignment
    (perspective is handled), pick the version, and adjust the sampling threshold.
    An **invert** toggle reads colour-inverted (light-on-dark) symbols — the
    module markers, the hover tooltip's ■/□ glyphs, and the legend all flip to
@@ -115,7 +121,7 @@ both can be overridden manually when those regions are damaged.
 | `js/matrix.js` | function-pattern map and zigzag data-module read order |
 | `js/decode.js` | matrix → codewords → per-block RS → bitstream parse (numeric/alnum/byte/kanji/ECI), with bit→module provenance kept throughout |
 | `js/homography.js` | grid ↔ image mapping: 4-corner projective, plus 3×3 biquadratic warp (Lagrange forward, Newton inverse) |
-| `js/detect.js` | adaptive binarization + 1:1:3:1:1 finder-pattern scan + corner/version estimation |
+| `js/detect.js` | adaptive binarization (normal/inverted × two thresholds) + 1:1:3:1:1 finder scan with diagonal cross-check, timing-validated triple/pair selection, version-info readback, alignment-anchored perspective fit |
 | `js/statefile.js` | `.qrdecode` state-file codec: decoder state + image bytes in one binary container |
 | `js/app.js` | canvas UI, interactions, sidebar, output rendering and cross-highlighting |
 

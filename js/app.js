@@ -240,7 +240,9 @@ function runDetect() {
   if (!state.imgCanvas) return;
   if (state.corners) pushHistory(); // re-detect over an existing grid is undoable
   const maxDim = Math.max(state.imgW, state.imgH);
-  const dscale = Math.min(1, 1200 / maxDim);
+  // 2000px keeps ~4px modules on dense codes in phone photos; below ~3px the
+  // finder ratios fall apart.
+  const dscale = Math.min(1, 2000 / maxDim);
   let idata;
   if (dscale < 1) {
     const off = document.createElement('canvas');
@@ -257,9 +259,11 @@ function runDetect() {
     state.corners = det.corners.map(p => ({ x: p.x / dscale, y: p.y / dscale }));
     initWarpPts(); // rebuild control grid on the new corners
     state.version = det.version;
-    $('sel-version').value = det.version;
+    state.invert = !!det.inverted; // detection settles polarity too
+    syncControls();
     state.overrides.clear();
-    setMessage(`detected: version ${det.version} (${17 + 4 * det.version}×${17 + 4 * det.version})`);
+    setMessage(`detected: version ${det.version} (${17 + 4 * det.version}×${17 + 4 * det.version})` +
+      (det.inverted ? ' · light-on-dark, invert enabled' : ''));
   } else {
     if (!state.corners) defaultGrid();
     setMessage('no finder patterns found — align the grid manually');
