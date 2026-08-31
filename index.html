@@ -18,6 +18,7 @@
     <span id="file-name" class="dim">no image — drop, paste, or open</span>
     <input type="file" id="file-input" accept="image/*,.qrdecode" hidden>
   </div>
+  <button id="btn-help" class="right" title="how to use qrdecode">help</button>
   <button id="btn-sidebar-toggle" class="mobile-only" title="toggle sidebar">⚙</button>
 </header>
 
@@ -40,6 +41,7 @@
       <div id="text-out" class="textout"></div>
       <div id="seg-list"></div>
       <h2>codewords <span class="dim">hover to trace bits → modules · dimmed = error correction</span></h2>
+      <div id="block-list"></div>
       <div id="cw-out"></div>
     </section>
   </section>
@@ -71,13 +73,6 @@
         </select>
       </div>
       <div id="fn-info" class="mono-line dim"></div>
-      <p class="hint">drag corner squares for perspective, edge/center diamonds to bend
-      the grid over curved surfaces, the arrows outside the corners to scale
-      (drag past the far corner to mirror — for mirrored QR codes), the
-      circular grabber above the top edge to rotate, and the four-direction arrow
-      below the bottom edge to move the whole grid · reset grid re-flattens ·
-      wheel = zoom · drag = pan · arrows nudge · ctrl/⌘Z undo, shift+ctrl/⌘Z redo
-      selected handle (⇧ = fine)</p>
     </div>
 
     <div class="group">
@@ -112,16 +107,6 @@
         <span id="override-info" class="mono-line">0 forced · 0 ignored</span>
         <button id="btn-clear-ovr">clear</button>
       </div>
-      <p class="hint">click a module: auto → force □ → force ■ → ignore → auto<br>
-      right-click: back to auto · shift-drag: mark a whole area (a logo, a hole)
-      as ignored — those codewords decode as erasures, which cost half the
-      error-correction budget of unknown errors</p>
-    </div>
-
-    <div class="group">
-      <h2>blocks</h2>
-      <div id="block-list"><span class="dim">—</span></div>
-      <p class="hint">✓ clean · +n corrected · en erased · ✕ uncorrectable<br>hover to see the block's modules</p>
     </div>
 
     <div class="group">
@@ -132,11 +117,11 @@
       <div class="lg"><span class="lg-icon lg-dot-badw"></span>reads □ where known pattern is ■</div>
       <div class="lg"><span class="lg-icon lg-forced"></span>forced value (right-click resets)</div>
       <div class="lg"><span class="lg-icon lg-ignore">×</span>ignored — damaged module, decoded as erasure</div>
-      <div class="lg"><span class="lg-icon lg-corner"></span>corner handle — drag for perspective</div>
-      <div class="lg"><span class="lg-icon lg-diamond"></span>warp handle — drag to curve grid</div>
-      <div class="lg"><span class="lg-icon lg-rotate"></span>rotate grabber (top) — drag to rotate grid</div>
-      <div class="lg"><span class="lg-icon lg-scale">⤢</span>scale handles (corners) — drag to scale grid</div>
-      <div class="lg"><span class="lg-icon lg-scale">✥</span>move handle (bottom) — drag to move grid</div>
+      <div class="lg"><span class="lg-icon lg-corner"></span>corner handle — perspective</div>
+      <div class="lg"><span class="lg-icon lg-diamond"></span>warp handle — bend grid</div>
+      <div class="lg"><span class="lg-icon lg-rotate"></span>rotate grabber (top)</div>
+      <div class="lg"><span class="lg-icon lg-scale">⤢</span>scale handles (corners)</div>
+      <div class="lg"><span class="lg-icon lg-scale">✥</span>move handle (bottom)</div>
       <div class="lg"><span class="lg-icon lg-hl"></span>hover trace — source of output bits</div>
       <div class="lg"><span class="lg-sample lg-suspect">A</span>suspect character (failed block)</div>
       <div class="lg"><span class="lg-sample lg-fixed">3f</span>corrected codeword</div>
@@ -145,6 +130,55 @@
     </div>
   </aside>
 </main>
+
+<dialog id="help-dialog">
+  <div class="help-head">
+    <h2>how to use</h2>
+    <button id="btn-help-close">close</button>
+  </div>
+  <div class="help-body">
+    <p><b>1 · load a picture</b><br>
+    Open a photo of a QR code, drag one in, or paste it. Your work is saved in
+    the browser as you go, so reloading the page picks up where you left off.
+    The save button downloads everything — picture and work — as one file you
+    can reopen later or send to someone.</p>
+
+    <p><b>2 · line up the grid</b><br>
+    A grid is laid over the code with a dot on every square, showing black or
+    white as the app reads it. It usually finds its place by itself; when it
+    doesn't, drag the blue handles: squares move the corners, diamonds bend the
+    grid for codes on curved surfaces, the circle above spins it, the arrows
+    outside the corners stretch it, and the cross below slides the whole thing.
+    Dragging a corner arrow across to the far side flips the grid, for
+    mirror-image codes. Arrow keys nudge the selected handle (hold shift for
+    tiny steps). If the code has more or fewer squares than the grid, change
+    "version" — that's a QR code's size.</p>
+
+    <p><b>3 · trust the red dots</b><br>
+    Parts of every QR code are always the same, so the app knows what those
+    squares should be. Dots turn red where the picture disagrees: one or two
+    may be real damage, but many red dots mean the grid is sitting wrong —
+    adjust until they go away. The threshold slider sets how dark counts as
+    black, and the quiet zone option also checks the blank border every code
+    must have around it.</p>
+
+    <p><b>4 · read the result</b><br>
+    The decoded text appears below the picture; red underlined letters are
+    unreliable. Under "codewords", the raw bytes are grouped into blocks
+    (B1, B2, …): ✓ means fully readable, +n means n mistakes were repaired,
+    e counts squares you marked damaged, ✕ means too damaged. Point at any
+    letter, byte, or block to light up the squares it came from — and point at
+    a square on the picture to see where it lands in the text.</p>
+
+    <p><b>5 · fix squares by hand</b><br>
+    Click a square to overrule what the app read: force it white, force it
+    black, or have it ignored (right-click puts it back to automatic). Hold
+    shift and drag a box over a hopeless area — a sticker, a hole, a logo — to
+    ignore all of it. Ignoring genuinely helps: when the app knows where the
+    damage is, it can repair twice as much of it. Every change is undoable
+    (ctrl/⌘Z), and the result updates as you work.</p>
+  </div>
+</dialog>
 
 <script src="js/gf256.js"></script>
 <script src="js/qrspec.js"></script>

@@ -19,6 +19,9 @@ picks up right where you left off. Loading a new image replaces the stored sessi
 
 ## Workflow
 
+A **help** button in the topbar opens plain-English instructions covering all
+of this; the steps below are the detailed version.
+
 1. **Load an image** — open, drag-drop, or paste from the clipboard.
 2. **Align the grid** — finder patterns are auto-detected when possible; a grid is
    projected over the symbol with a sample dot at each module center (black/white =
@@ -52,8 +55,9 @@ picks up right where you left off. Loading a new image replaces the stored sessi
    **Reset grid** returns to a flat, centered starting square. Every edit — grid
    geometry, forced/ignored modules, version/EC/mask/threshold — is undoable:
    ctrl/⌘Z and shift+ctrl/⌘Z (or the topbar buttons), session-only.
-3. **Read the decode** — below the image: recovered text, segment structure, and
-   every codeword grouped by error-correction block. Reed-Solomon runs per block, so
+3. **Read the decode** — below the image: recovered text, segment structure,
+   per-block status chips, and every codeword grouped by error-correction block.
+   Reed-Solomon runs per block, so
    an uncorrectable block doesn't stop the rest from decoding (partial decoding).
    Characters that depend on a failed block are flagged red as suspect.
 4. **Fix bits by hand** — click any module to cycle auto → force-white → force-black

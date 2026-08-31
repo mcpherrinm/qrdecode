@@ -979,6 +979,12 @@ function wireEvents() {
   $('btn-open').addEventListener('click', () => $('file-input').click());
   $('file-input').addEventListener('change', e => loadImageFile(e.target.files[0]));
   $('btn-save-state').addEventListener('click', saveStateFile);
+  $('btn-help').addEventListener('click', () => $('help-dialog').showModal());
+  $('btn-help-close').addEventListener('click', () => $('help-dialog').close());
+  // Click on the backdrop (the dialog element itself, outside .help-head/.help-body).
+  $('help-dialog').addEventListener('click', e => {
+    if (e.target === e.currentTarget) e.currentTarget.close();
+  });
   $('btn-detect').addEventListener('click', runDetect);
   $('btn-reset-grid').addEventListener('click', () => {
     if (!state.imgCanvas) return;
