@@ -93,12 +93,14 @@ async function loadImageFile(file) {
       (!isImage && stateFileSniff(new Uint8Array(await file.slice(0, 4).arrayBuffer())))) {
     return loadStateFile(file);
   }
-  if (!isImage) return;
   let bmp;
   try {
     bmp = await createImageBitmap(file);
   } catch (e) {
-    setMessage(`could not read image: ${e.message}`);
+    const name = file.name || 'file';
+    setMessage(/\.hei[cf]$/i.test(name) || /hei[cf]/.test(file.type)
+      ? `could not read ${name} — this browser can't decode HEIC; convert it to JPEG or PNG first`
+      : `could not read ${name} — not a supported image`);
     return;
   }
   applyImage(bmp, file.name || 'pasted image', file);
@@ -167,19 +169,20 @@ async function loadStateFile(file) {
 
 function applyImage(bmp, name, blob) {
   state.imgBlob = blob || null;
+  const w = bmp.width, h = bmp.height;
   const off = document.createElement('canvas');
-  off.width = bmp.width;
-  off.height = bmp.height;
+  off.width = w;
+  off.height = h;
   off.getContext('2d').drawImage(bmp, 0, 0);
   state.imgCanvas = off;
-  state.imgW = bmp.width;
-  state.imgH = bmp.height;
-  const idata = off.getContext('2d').getImageData(0, 0, bmp.width, bmp.height);
+  state.imgW = w;
+  state.imgH = h;
+  const idata = off.getContext('2d').getImageData(0, 0, w, h);
   state.gray = toGray(idata);
   state.fileName = name;
   state.overrides.clear();
   state.result = null;
-  $('file-name').textContent = `${state.fileName} · ${bmp.width}×${bmp.height}`;
+  $('file-name').textContent = `${state.fileName} · ${w}×${h}`;
   $('drop-hint').style.display = 'none';
 }
 
