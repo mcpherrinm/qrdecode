@@ -1075,12 +1075,25 @@ function wireEvents() {
     state.maskOverride = e.target.value === 'auto' ? null : +e.target.value;
     refresh(false);
   });
-  $('rng-threshold').addEventListener('input', e => {
-    pushHistory('thr');
+  // One pointer gesture on the slider = one undo step, however long the drag
+  // lasts (tag coalescing alone splits a slow drag every 800ms). Keyboard
+  // steps have no pointerdown and still coalesce as short bursts.
+  let thrGesture = 0; // 0 idle · 1 pointer down, snapshot pending · 2 snapshot taken
+  const thr = $('rng-threshold');
+  thr.addEventListener('pointerdown', () => { thrGesture = 1; });
+  thr.addEventListener('pointerup', () => { if (thrGesture === 1) thrGesture = 0; });
+  thr.addEventListener('input', e => {
+    if (thrGesture === 1) {
+      pushHistory();
+      thrGesture = 2;
+    } else if (thrGesture === 0) {
+      pushHistory('thr');
+    }
     state.thrOffset = +e.target.value;
     $('thr-label').textContent = (state.thrOffset >= 0 ? '+' : '') + state.thrOffset;
     refresh(true);
   });
+  thr.addEventListener('change', () => { thrGesture = 0; });
   // Display-only (doesn't affect the decode), so like pan/zoom it skips history.
   $('sel-quiet').addEventListener('change', e => {
     state.quietZone = +e.target.value;
