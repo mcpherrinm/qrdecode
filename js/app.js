@@ -1016,21 +1016,9 @@ function wireEvents() {
     if (!drag) setHover(null);
     updateStatus(null);
     hideHandleTip();
-    scheduleMenuHide(); // grace period so the pointer can travel into the menu
+    hideDotMenu(); // the tooltip takes no clicks, so no grace period on leave
   });
 
-  const menu = $('dot-menu');
-  menu.addEventListener('pointerenter', () => { menuHovered = true; clearTimeout(menuHideTimer); });
-  menu.addEventListener('pointerleave', () => { menuHovered = false; hideDotMenu(); });
-  menu.addEventListener('click', e => {
-    const row = e.target.closest('[data-act]');
-    if (!row || menuModule == null) return;
-    pushHistory();
-    if (row.dataset.act === 'auto') state.overrides.delete(menuModule);
-    else state.overrides.set(menuModule, row.dataset.act === 'x' ? 2 : +row.dataset.act);
-    refresh(false);
-    renderDotMenu();
-  });
   canvas.addEventListener('wheel', onWheel, { passive: false });
   canvas.addEventListener('contextmenu', onContextMenu);
   window.addEventListener('keydown', onKeyDown);
@@ -1576,7 +1564,6 @@ function onContextMenu(e) {
 // ------------------------------------------------ dot menu / handle tip overlays
 
 let menuModule = null;   // module idx the dot menu is showing for
-let menuHovered = false;
 let menuHideTimer = 0;
 
 function showDotMenu(m, minGap = 0) {
@@ -1600,26 +1587,28 @@ function renderDotMenu() {
   const ovr = state.overrides.get(menuModule);
   const sampled = state.sample ? state.sample.bits[menuModule] : 0;
   const rows = [
-    { act: '0', label: 'force □', active: ovr === 0 },
-    { act: '1', label: 'force ■', active: ovr === 1 },
-    { act: 'x', label: 'ignore (damaged)', icon: '×', active: ovr === 2 },
-    { act: 'auto', label: `auto (${sampled ? '■' : '□'})`, active: ovr === undefined },
+    { label: 'force □', active: ovr === 0 },
+    { label: 'force ■', active: ovr === 1 },
+    { label: 'ignore damaged', tail: '×', active: ovr === 2 },
+    { label: `auto (${sampled ? '■' : '□'})`, active: ovr === undefined },
   ];
   el.textContent = '';
   for (const row of rows) {
     const d = document.createElement('div');
     d.className = 'dm-row' + (row.active ? ' active' : '');
-    d.dataset.act = row.act;
-    d.textContent = `${row.active ? '●' : '○'} `;
-    if (row.icon) {
+    d.textContent = `${row.active ? '→' : ' '} ${row.label}`;
+    if (row.tail) {
       const ic = document.createElement('span');
       ic.className = 'dm-x';
-      ic.textContent = `${row.icon} `;
+      ic.textContent = row.tail;
       d.appendChild(ic);
     }
-    d.appendChild(document.createTextNode(row.label));
     el.appendChild(d);
   }
+  const help = document.createElement('div');
+  help.className = 'dm-help';
+  help.textContent = 'click to change · right-click to clear';
+  el.appendChild(help);
 }
 
 function hideDotMenu() {
@@ -1628,9 +1617,11 @@ function hideDotMenu() {
   $('dot-menu').hidden = true;
 }
 
+// Tiny delay only — enough to ride out pointer jitter between modules; the
+// tooltip isn't interactive, so it doesn't need to outlive the hover.
 function scheduleMenuHide() {
   clearTimeout(menuHideTimer);
-  menuHideTimer = setTimeout(() => { if (!menuHovered) hideDotMenu(); }, 150);
+  menuHideTimer = setTimeout(hideDotMenu, 40);
 }
 
 function showHandleTip(p, text) {

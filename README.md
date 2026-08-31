@@ -63,9 +63,9 @@ of this; the steps below are the detailed version.
    an uncorrectable block doesn't stop the rest from decoding (partial decoding).
    Characters that depend on a failed block are flagged red as suspect.
 4. **Fix bits by hand** — click any data module to cycle auto → force-white →
-   force-black → ignore → auto (right-click resets), or use the small dropdown that appears
-   under a hovered dot to pick force ■ / force □ / ignore / auto directly (the auto
-   row shows the detected value). Clicking through a warp diamond toggles the module
+   force-black → ignore → auto (right-click resets). A tooltip under the hovered
+   dot lists the four states with an arrow at the current one (the auto row shows
+   the detected value). Clicking through a warp diamond toggles the module
    beneath it; dragging the diamond moves the grid. Forced modules are boxed on a
    grey backdrop — red when the forced value overrides the read one, purple when
    it (redundantly) matches — ignored ones marked with gray ×. The decode updates

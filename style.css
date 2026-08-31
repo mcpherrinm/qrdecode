@@ -109,18 +109,24 @@ main {
   white-space: nowrap;
 }
 #dot-menu[hidden], #handle-tip[hidden] { display: none; }
+/* The dot menu is a tooltip: it shows the module's states, it doesn't take clicks. */
+#dot-menu { pointer-events: none; }
 .dm-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 8px;
-  cursor: pointer;
-  user-select: none;
 }
-.dm-row:hover { background: var(--fg); color: var(--bg); }
 .dm-row.active { font-weight: 700; }
 /* Gray ×, matching the legend and the canvas ignore marker. */
 .dm-x { color: #767676; font-weight: 700; }
+.dm-help {
+  color: var(--dim);
+  font-size: 10px;
+  padding: 1px 8px;
+  border-top: 1px solid var(--soft);
+  margin-top: 2px;
+}
 #handle-tip {
   border-color: #2979ff;
   color: #2979ff;
