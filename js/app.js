@@ -271,6 +271,120 @@ function runDetect() {
   refresh(true);
 }
 
+// "Infer threshold": trust the grid and sweep the threshold offset at both
+// polarities. A threshold whose decode succeeds with no corrected errors is
+// the strongest possible signal, so full decodes are ranked first (fewest
+// corrections wins); when nothing decodes, fall back to agreement with the
+// spec-fixed modules and any user-forced values. Ignored modules are left out
+// entirely, and so are format/version-info bits — their expected values
+// derive from the current decode, which is exactly what a bad threshold
+// corrupts.
+function inferThreshold() {
+  if (!state.sample || !state.corners) {
+    setMessage('nothing to fit — load an image first');
+    return;
+  }
+  const size = gridSize();
+  const expected = getLayout(state.version).expected;
+  const means = state.sample.means;
+  const targets = []; // [module index, bit it should read]
+  for (let i = 0; i < size * size; i++) {
+    const ovr = state.overrides.get(i);
+    if (ovr === 0 || ovr === 1) targets.push([i, ovr]);
+    else if (ovr !== 2 && expected[i] >= 0) targets.push([i, expected[i]]);
+  }
+  if (!targets.length) {
+    setMessage('nothing to fit — no known patterns or forced modules');
+    return;
+  }
+  const base = otsu(means);
+  // The bit pattern only changes when the threshold crosses a sampled mean,
+  // so offsets sharing a dark-module count share everything — group them and
+  // evaluate each distinct pattern once.
+  const sorted = Float64Array.from(means).sort();
+  const darkCount = (thr) => {
+    let lo = 0, hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid] <= thr) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  };
+  const groups = new Map(); // "inv:count" -> {inv, offs[]}
+  for (const inv of [false, true]) {
+    for (let off = -64; off <= 64; off++) {
+      const key = `${inv}:${darkCount(base + off)}`;
+      if (!groups.has(key)) groups.set(key, { inv, offs: [] });
+      groups.get(key).offs.push(off);
+    }
+  }
+  for (const g of groups.values()) {
+    const thr = base + g.offs[0];
+    const dark = g.inv ? 0 : 1;
+    const bits = new Uint8Array(size * size);
+    for (let i = 0; i < bits.length; i++) bits[i] = means[i] <= thr ? dark : 1 - dark;
+    g.mism = 0;
+    for (const [i, exp] of targets) if (bits[i] !== exp) g.mism++;
+    // Full trial decode, with forces and erasures applied as they would be
+    // live. fails = unrecoverable blocks; errs = corrections beyond the
+    // user-declared erasures.
+    try {
+      const res = decodeMatrix((r, c) => {
+        const ovr = state.overrides.get(r * size + c);
+        return ovr === 0 || ovr === 1 ? ovr : bits[r * size + c];
+      }, state.version, {
+        ecOverride: state.ecOverride,
+        maskOverride: state.maskOverride,
+        isIgnored: isIgnoredModule,
+      });
+      g.fails = 0;
+      g.errs = 0;
+      for (const b of res.blocks) {
+        if (b.status === 'fail') g.fails++;
+        else g.errs += Math.max(0, b.fixedCount - b.erasedCount);
+      }
+    } catch (e) {
+      g.fails = Infinity;
+      g.errs = Infinity;
+    }
+    // Rank: any full decode beats every non-decode; among decodes, fewest
+    // corrections then fewest known mismatches; among non-decodes, mismatch.
+    g.key = g.fails === 0 ? [0, g.errs, g.mism] : [1, g.mism, 0];
+  }
+  const cmp = (a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2];
+  const best = [...groups.values()].sort(cmp)[0];
+  const wins = [...groups.values()].filter(g => cmp(g, best) === 0);
+  // Prefer keeping the current polarity on a tie, and center the offset in the
+  // widest run of equally-good values so the choice isn't knife-edge.
+  const inv = wins.some(g => g.inv === state.invert) ? state.invert : wins[0].inv;
+  const offs = wins.filter(g => g.inv === inv).flatMap(g => g.offs).sort((a, b) => a - b);
+  let runStart = 0, bestRun = [offs[0], offs[0]];
+  for (let k = 1; k <= offs.length; k++) {
+    if (k === offs.length || offs[k] !== offs[k - 1] + 1) {
+      if (offs[k - 1] - offs[runStart] > bestRun[1] - bestRun[0]) bestRun = [offs[runStart], offs[k - 1]];
+      runStart = k;
+    }
+  }
+  const off = Math.round((bestRun[0] + bestRun[1]) / 2);
+  const label = `${off >= 0 ? '+' : ''}${off}`;
+  const fit = best.fails === 0
+    ? (best.errs === 0 ? 'decodes with no errors' : `decodes (+${best.errs} corrected)`)
+    : `no full decode — ${best.mism}/${targets.length} known/forced mismatched`;
+  if (off === state.thrOffset && inv === state.invert) {
+    setMessage(`threshold ${label} already optimal · ${fit}`);
+    return;
+  }
+  pushHistory();
+  const parts = [`inferred threshold ${label}`];
+  if (inv !== state.invert) parts.push(inv ? 'invert on' : 'invert off');
+  parts.push(fit);
+  state.thrOffset = off;
+  state.invert = inv;
+  syncControls();
+  refresh(true);
+  setMessage(parts.join(' · '));
+}
+
 function defaultGrid() {
   const side = Math.min(state.imgW, state.imgH) * 0.7;
   const cx = state.imgW / 2, cy = state.imgH / 2, r = side / 2;
@@ -365,9 +479,10 @@ function applySavedState(saved) {
   state.invert = !!saved.invert;
   state.quietZone = saved.quietZone || 0;
   state.overrides = new Map(saved.overrides);
-  // Older sessions/state files could force spec-fixed modules; drop those.
-  for (const i of [...state.overrides.keys()]) {
-    if (isLockedModule(i)) state.overrides.delete(i);
+  // Spec-fixed modules can't be forced (ignoring them is fine); drop stale
+  // forces from older sessions/state files.
+  for (const [i, v] of [...state.overrides]) {
+    if (v !== 2 && isLockedModule(i)) state.overrides.delete(i);
   }
   if (saved.view) state.view = { ...saved.view };
   state.selHandle = -1;
@@ -592,9 +707,11 @@ function isIgnoredModule(r, c) {
   return state.overrides.get(r * gridSize() + c) === 2;
 }
 
-// Spec-fixed modules (function patterns, format/version info) are read-only:
-// the decoder never reads function patterns, and forcing any of them would
-// only mask the alignment-quality signal.
+// Spec-fixed modules (function patterns, format/version info) can't be
+// forced: the decoder never reads function patterns, and forcing one would
+// only mask the alignment-quality signal. They CAN be marked ignored — known
+// damage on a finder or timing pattern would otherwise poison the mismatch
+// count and the infer-threshold fit.
 function isLockedModule(i) {
   return !!getLayout(state.version).isF[i];
 }
@@ -1129,6 +1246,7 @@ function wireEvents() {
     syncLegend();
     refresh(true);
   });
+  $('btn-infer-thr').addEventListener('click', inferThreshold);
 
   // Drag & drop + paste.
   const wrap = $('canvas-wrap');
@@ -1477,7 +1595,7 @@ function onPointerMove(e) {
   }
   // A non-corner diamond shows its tip AND the dot menu for the module beneath it.
   if (h) showHandleTip(imgToScreen(h.pt), 'drag to move'); else hideHandleTip();
-  if (m && !isLockedModule(m.i) && state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0);
+  if (m && state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0);
   else scheduleMenuHide();
   if (m && state.result) {
     const g = state.result.moduleToCw[m.i];
@@ -1511,7 +1629,7 @@ function onPointerUp(e) {
     const h = wasDrag.mode === 'handle' ? handleList()[wasDrag.idx] : null;
     if (h && h.corner) { draw(); return; }
     const m = hitModule(p.x, p.y);
-    if (m && !isLockedModule(m.i)) {
+    if (m) {
       cycleOverride(m.i);
       refresh(false);
       if (state.sample && modulePx() >= 5) showDotMenu(m, h ? 15 : 0); // keep menu current
@@ -1582,11 +1700,9 @@ function applyMarquee(a, b) {
   const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
   const size = gridSize();
   const hit = [];
-  const isF = getLayout(state.version).isF;
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
       const i = r * size + c;
-      if (isF[i]) continue; // spec-fixed modules stay untouched
       const p = gridToScreen(c + 0.5, r + 0.5);
       if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) hit.push(i);
     }
@@ -1600,7 +1716,7 @@ function applyMarquee(a, b) {
   }
   setMessage(allIgnored
     ? `unmarked ${hit.length} ignored module${hit.length > 1 ? 's' : ''}`
-    : `ignoring ${hit.length} module${hit.length > 1 ? 's' : ''} — their codewords decode as erasures`);
+    : `ignoring ${hit.length} module${hit.length > 1 ? 's' : ''} — data decodes as erasures, known patterns leave the fit`);
   refresh(false);
 }
 
@@ -1647,12 +1763,22 @@ function renderDotMenu() {
   const el = $('dot-menu');
   const ovr = state.overrides.get(menuModule);
   const sampled = state.sample ? state.sample.bits[menuModule] : 0;
-  const rows = [
-    { label: `force ${bitGlyph(0)}`, active: ovr === 0 },
-    { label: `force ${bitGlyph(1)}`, active: ovr === 1 },
-    { label: 'ignore damaged', tail: '×', active: ovr === 2 },
-    { label: `auto (${bitGlyph(sampled)})`, active: ovr === undefined },
-  ];
+  let rows;
+  if (isLockedModule(menuModule)) {
+    // Spec-fixed: value known, so no forcing — only known-damage marking.
+    const exp = expectedBit(menuModule, getLayout(state.version).expected, dynamicExpected());
+    rows = [
+      { label: 'ignore damaged', tail: '×', active: ovr === 2 },
+      { label: `auto${exp >= 0 ? ` (known ${bitGlyph(exp)})` : ''}`, active: ovr !== 2 },
+    ];
+  } else {
+    rows = [
+      { label: `force ${bitGlyph(0)}`, active: ovr === 0 },
+      { label: `force ${bitGlyph(1)}`, active: ovr === 1 },
+      { label: 'ignore damaged', tail: '×', active: ovr === 2 },
+      { label: `auto (${bitGlyph(sampled)})`, active: ovr === undefined },
+    ];
+  }
   el.textContent = '';
   for (const row of rows) {
     const d = document.createElement('div');
@@ -1700,9 +1826,14 @@ function hideHandleTip() {
 
 // Cycle in menu order, top to bottom: force light -> force dark -> ignore -> auto.
 function cycleOverride(i) {
-  if (isLockedModule(i)) return;
   pushHistory();
   const cur = state.overrides.get(i);
+  if (isLockedModule(i)) {
+    // No forcing — just toggle known-damage marking.
+    if (cur === 2) state.overrides.delete(i);
+    else state.overrides.set(i, 2);
+    return;
+  }
   if (cur === undefined) state.overrides.set(i, 0);
   else if (cur === 0) state.overrides.set(i, 1);
   else if (cur === 1) state.overrides.set(i, 2);

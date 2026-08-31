@@ -35,7 +35,13 @@ of this; the steps below are the detailed version.
    (perspective is handled), pick the version, and adjust the sampling threshold.
    An **invert** toggle reads colour-inverted (light-on-dark) symbols — the
    module markers, the hover tooltip's ■/□ glyphs, and the legend all flip to
-   the image's colours too, so they keep matching what's actually printed. Arrow keys
+   the image's colours too, so they keep matching what's actually printed.
+   An **infer threshold** button assumes the grid is aligned and sweeps both
+   the threshold and the polarity, in one undoable step. A setting whose
+   decode succeeds with no corrected errors is the strongest possible signal
+   and always wins; failing that it picks whatever best matches the
+   spec-fixed modules and any values you've forced (ignored modules are
+   excluded from the fit). Arrow keys
    nudge the selected handle; hold Shift for 0.1 px steps.
 
    Modules whose value is fixed by the spec — finder rings, separators, timing,
@@ -80,13 +86,16 @@ of this; the steps below are the detailed version.
    it (redundantly) matches — ignored ones marked with gray ×. The decode updates
    live, and corrected
    codewords report what changed. A legend at the bottom of the sidebar explains
-   every marker and color. Spec-fixed modules (the square marks) are read-only:
-   the decoder never reads them, so forcing them could only hide the alignment
-   signal.
+   every marker and color. Spec-fixed modules (the square marks) can't be forced —
+   the decoder never reads them, so forcing one could only hide the alignment
+   signal — but they *can* be marked ignored: known damage on a finder or
+   timing pattern then stops counting against the mismatch tally and the
+   threshold fit.
 
    **Ignore = erasure.** When part of the symbol is known to be unreadable — a logo
    printed over the middle, a hole, a sticker — mark it ignored (shift-drag draws a
-   rectangle over a whole area; shift-drag again to unmark). Every codeword touching
+   rectangle over a whole area, spec-fixed modules included; shift-drag again to
+   unmark). Every codeword touching
    an ignored module is decoded as a Reed-Solomon *erasure*: the decoder knows
    *where* the damage is, so it only has to solve for the values. That doubles the
    correction budget (2·errors + erasures ≤ EC codewords per block, vs. errors ≤

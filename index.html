@@ -69,6 +69,9 @@
         <span class="dim">light-on-dark code</span>
       </div>
       <div class="row">
+        <button id="btn-infer-thr" title="assuming the grid is aligned, pick the threshold and polarity that best match the known patterns and any forced modules">infer threshold</button>
+      </div>
+      <div class="row">
         <label for="sel-quiet">quiet zone</label>
         <select id="sel-quiet" autocomplete="off">
           <option value="0">off</option>
@@ -167,7 +170,8 @@
     They turn red where the picture disagrees: one or two
     may be real damage, but many red dots mean the grid is sitting wrong —
     adjust until they go away. The threshold slider sets how dark counts as
-    black, invert flips the reading for codes printed light-on-dark, and the
+    black, invert flips the reading for codes printed light-on-dark, and
+    "infer threshold" sets both for you once the grid sits right. The
     quiet zone option also checks the blank border every code must have
     around it.</p>
 
@@ -180,10 +184,11 @@
     a square on the picture to see where it lands in the text.</p>
 
     <p><b>5 · fix squares by hand</b><br>
-    Only the round dots can be changed — the square marks are fixed by the QR
-    standard and carry no data.
     Click a round dot to overrule what the app read: force it white, force it
-    black, or have it ignored (right-click puts it back to automatic). Hold
+    black, or have it ignored (right-click puts it back to automatic). The
+    square marks are fixed by the QR standard and carry no data, so they
+    can't be forced — but a damaged one can still be marked ignored so it
+    stops counting against you. Hold
     shift and drag a box over a hopeless area — a sticker, a hole, a logo — to
     ignore all of it. Ignoring genuinely helps: when the app knows where the
     damage is, it can repair twice as much of it. Every change is undoable
